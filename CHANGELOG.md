@@ -1,6 +1,10 @@
 # HearthJS
 
-### v3.1.0
+### v4.0.0
+- 🔥 Improve performance of `sqlToJson` function. On big queries, the function could be really slow. Performance has been imrpoved up to 80% on tested queries (parsing going from 1.34s to 248ms)
+- Add a new constant that can be used in SQL file (`PRINT_READY` which print the SQL request already filled with data)
+
+### v3.1.0 - CARBONE FORK
 - Update packages `express`, `cookie-parser` and `socket.io`
 
 ### v3.0.0
