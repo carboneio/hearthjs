@@ -1,14 +1,54 @@
-/* eslint-env mocha */
 const cron = require('../lib/cron')
 const assert = require('assert')
 const path = require('path')
 const fs = require('fs')
 const app = require('../lib/')
-const request = require('request')
-const { spawn } = require('child_process')
 const logger = require('../lib/logger')
 
-let program = null
+
+/**
+ * Wait until the cron files hold their expected content. The crons run every
+ * second and fs.writeFile truncates first, so a fixed delay raced with both.
+ * @param {Array} expectations [{ path, content }]
+ * @param {Number} timeout Maximum time to wait in ms
+ * @param {Function} callback
+ */
+function waitForCronFiles (expectations, timeout, callback) {
+  const _deadline = Date.now() + timeout
+
+  const check = () => {
+    let allMatch = true
+
+    for (let i = 0; i < expectations.length; i++) {
+      let content = null
+
+      try {
+        content = fs.readFileSync(expectations[i].path, 'utf8')
+      } catch (e) {
+        allMatch = false
+        break
+      }
+
+      if (content !== expectations[i].content) {
+        allMatch = false
+        break
+      }
+    }
+
+    if (allMatch) {
+      return callback(null)
+    }
+
+    if (Date.now() >= _deadline) {
+      // Let the caller assert and produce a readable diff
+      return callback(new Error(`Cron files were not written within ${timeout}ms`))
+    }
+
+    return setTimeout(check, 50)
+  }
+
+  check()
+}
 
 describe('Cron', () => {
   after(() => {
@@ -41,17 +81,17 @@ describe('Cron', () => {
       cron.loadCron((err) => {
         assert.strictEqual(err, null)
         assert.strictEqual(Object.keys(cron._cronList).length, 2)
-        setTimeout(() => {
+        waitForCronFiles([
+          { path: pathCron1, content: 'Test cron' },
+          { path: pathCron2, content: 'Test cron 2' }
+        ], 10000, (err) => {
           cron.stop('testCron')
           cron.stop('testCron2')
-          const contentCron1 = fs.readFileSync(pathCron1, 'utf8')
-          const contentCron2 = fs.readFileSync(pathCron2, 'utf8')
-          assert.strictEqual(contentCron1, 'Test cron')
-          assert.strictEqual(contentCron2, 'Test cron 2')
+          assert.strictEqual(err, null)
           done()
-        }, 1000)
+        })
       })
-    })
+    }).timeout(20000)
   })
 
   describe('Run server', () => {
@@ -77,91 +117,15 @@ describe('Cron', () => {
         assert.strictEqual(err, null)
         assert.notStrictEqual(app.cron._cronList['testCron'], undefined)
         assert.notStrictEqual(app.cron._cronList['testCron2'], undefined)
-        setTimeout(() => {
-          let content1 = fs.readFileSync(pathCron1, 'utf8')
-          let content2 = fs.readFileSync(pathCron2, 'utf8')
-          assert.strictEqual(content1, 'Test cron')
-          assert.strictEqual(content2, 'Test cron 2')
-          done()
-        }, 1000)
-      })
-    })
-  })
-
-  describe('Run clusterize server', () => {
-    const pathCron1 = path.join(__dirname, 'datasets', 'cronApp', 'server', 'cron', 'cron1')
-    const pathCron2 = path.join(__dirname, 'datasets', 'cronApp', 'server', 'cron', 'cron2')
-
-    before(() => {
-      process.env.HEARTH_SERVER_PATH = path.join(__dirname, 'datasets', 'cronApp', 'server')
-    })
-
-    afterEach((done) => {
-      if (fs.existsSync(pathCron1)) {
-        fs.unlinkSync(pathCron1)
-      }
-      if (fs.existsSync(pathCron2)) {
-        fs.unlinkSync(pathCron2)
-      }
-      stopCluster(done)
-    })
-
-    it('should start server with 4 clusters, run cron, crash all process and continue running cron', (done) => {
-      let _nbQueries = 300
-      let _waitedResponse = _nbQueries
-
-      let crash = () => {
-        request.get('http://localhost:8080/crash', function (err, response, body) {
-          assert.notStrictEqual(err, null)
-          _waitedResponse -= 1
-          if (_waitedResponse === 0) {
-            _endOfTest()
-          }
-        })
-      }
-
-      let sendRequest = () => {
-        request.get('http://localhost:8080/user', function (err, response, body) {
+        waitForCronFiles([
+          { path: pathCron1, content: 'Test cron' },
+          { path: pathCron2, content: 'Test cron 2' }
+        ], 10000, (err) => {
           assert.strictEqual(err, null)
-          _waitedResponse -= 1
-          if (_waitedResponse === 0) {
-            _endOfTest()
-          }
-        })
-      }
-
-      let _endOfTest = () => {
-        _waitedResponse = _nbQueries
-        fs.unlinkSync(pathCron1)
-        fs.unlinkSync(pathCron2)
-
-        setTimeout(() => {
-          let content1 = fs.readFileSync(pathCron1, 'utf8')
-          let content2 = fs.readFileSync(pathCron2, 'utf8')
-          assert.strictEqual(content1, 'Test cron')
-          assert.strictEqual(content2, 'Test cron 2')
           done()
-        }, 1000)
-      }
-
-      executeCluster('4', '8080', () => {
-        setTimeout(() => {
-          let content1 = fs.readFileSync(pathCron1, 'utf8')
-          let content2 = fs.readFileSync(pathCron2, 'utf8')
-          assert.strictEqual(content1, 'Test cron')
-          assert.strictEqual(content2, 'Test cron 2')
-
-          for (let i = 0; i < _nbQueries; i++) {
-            // Crash server every 20 * 10ms
-            if (i % 20 === 0) {
-              setTimeout(crash, 20 * i)
-            } else {
-              setTimeout(sendRequest, 20 * i)
-            }
-          }
-        }, 1000)
+        })
       })
-    }).timeout(50000)
+    }).timeout(20000)
   })
 
   describe('Function add, start, stop and getAction', () => {
@@ -181,7 +145,7 @@ describe('Cron', () => {
     it('should add a cron and start it automatically', () => {
       cron.add('myCron', '* * * * *', () => {}, { start: true })
       assert.notStrictEqual(cron._cronList['myCron'], undefined)
-      assert.strictEqual(cron._cronList['myCron'].cron.status, 'scheduled')
+      assert.strictEqual(cron._cronList['myCron'].cron.getStatus(), 'idle')
     })
 
     it('should throw an error if cron already exists', () => {
@@ -194,7 +158,7 @@ describe('Cron', () => {
     it('should add a cron but not start it', () => {
       cron.add('myCron', '* * * * *', () => {})
       assert.notStrictEqual(cron._cronList['myCron'], undefined)
-      assert.strictEqual(cron._cronList['myCron'].cron.status, undefined)
+      assert.strictEqual(cron._cronList['myCron'].cron.getStatus(), 'stopped')
     })
 
     it('should throw an error if start is called for an unknown cron', () => {
@@ -219,9 +183,9 @@ describe('Cron', () => {
       cron.add('myCron', '* * * * *', () => {})
       cron.start('myCron')
       assert.notStrictEqual(cron._cronList['myCron'], undefined)
-      assert.strictEqual(cron._cronList['myCron'].cron.status, 'scheduled')
+      assert.strictEqual(cron._cronList['myCron'].cron.getStatus(), 'idle')
       cron.stop('myCron')
-      assert.strictEqual(cron._cronList['myCron'].cron.status, 'stoped')
+      assert.strictEqual(cron._cronList['myCron'].cron.getStatus(), 'stopped')
     })
 
     it('should return the action and we could execute it', () => {
@@ -243,30 +207,3 @@ describe('Cron', () => {
  * @param {String} port Application port
  * @param {Function} callback
  */
-function executeCluster (nbCluster, port, callback) {
-  const _serverPath = path.join(__dirname, 'datasets', 'cronApp', 'server')
-  const binPath = path.join(__dirname, '..', 'bin', 'hearthjs')
-
-  program = spawn(binPath, ['start', 'prod', '--cluster', nbCluster, '--port', port], { cwd: _serverPath })
-  program.stdout.pipe(process.stdout)
-  program.stderr.pipe(process.stderr)
-
-  setTimeout(() => {
-    return callback()
-  }, 1000)
-}
-
-/**
- * Stop started cluster
- * @param {Function} callback
- */
-function stopCluster (callback) {
-  if (program) {
-    process.kill(program.pid)
-    program = null
-  }
-
-  setTimeout(() => {
-    return callback()
-  }, 200)
-}

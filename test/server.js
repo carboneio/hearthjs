@@ -1,9 +1,10 @@
-/* eslint-env mocha */
 const app = require('../lib/')
 const assert = require('assert')
 const path = require('path')
-const request = require('request')
+const rock = require('rock-req')
+const MultipartForm = require('./helpers/multipart')
 const fs = require('fs')
+const net = require('net')
 const server = require('../lib/server')
 const { spawn } = require('child_process')
 const logger = require('../lib/logger')
@@ -86,9 +87,9 @@ describe('Server', () => {
     })
 
     it('should add a middleware', (done) => {
-      request.get(app.server.getEndpoint() + 'user', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'user', function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(response.body, 'Pass to middleware')
+        assert.strictEqual(body.toString(), 'Pass to middleware')
         done()
       })
     })
@@ -110,7 +111,7 @@ describe('Server', () => {
     })
 
     it('should serve schema-a route which return an error and update status code in before', function (done) {
-      request.get(app.server.getEndpoint() + 'schema-a', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-a', function (err, response, body) {
         assert.strictEqual(err, null)
         assert.strictEqual(response.statusCode, 402)
         body = JSON.parse(body)
@@ -121,31 +122,31 @@ describe('Server', () => {
     })
 
     it('should serve schema-b route which return a message', (done) => {
-      request.get(app.server.getEndpoint() + 'schema-b', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-b', function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'Coucou')
+        assert.strictEqual(body.toString(), 'Coucou')
         done()
       })
     })
 
     it('should serve schema-c route which call before and after', (done) => {
-      request.get(app.server.getEndpoint() + 'schema-c', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-c', function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'ououlela')
+        assert.strictEqual(body.toString(), 'ououlela')
         done()
       })
     })
 
     it('should not server /error', (done) => {
-      request.get(app.server.getEndpoint() + 'error', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'error', function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body.includes('Cannot GET /error'), true)
+        assert.strictEqual(body.toString().includes('Cannot GET /error'), true)
         done()
       })
     })
 
     it('should post data and use them', (done) => {
-      request.post({
+      rock.post({
         url: app.server.getEndpoint() + 'schema-d',
         form: {
           value1: 'val1',
@@ -154,13 +155,13 @@ describe('Server', () => {
         }
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'val1val2val3')
+        assert.strictEqual(body.toString(), 'val1val2val3')
         done()
       })
     })
 
     it('should put data and use them', (done) => {
-      request.put({
+      rock.put({
         url: app.server.getEndpoint() + 'schema-e',
         form: {
           value1: '1',
@@ -169,47 +170,51 @@ describe('Server', () => {
         }
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, '123')
+        assert.strictEqual(body.toString(), '123')
         done()
       })
     })
 
     it('should use delete method', (done) => {
-      request.delete({
+      rock.delete({
         url: app.server.getEndpoint() + 'schema-f/42'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, '42')
+        assert.strictEqual(body.toString(), '42')
         done()
       })
     })
 
     it('should pass through middleware', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'middleware'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'value')
+        assert.strictEqual(body.toString(), 'value')
         done()
       })
     })
 
     it('should upload file', (done) => {
-      let req = request.post({
-        url: app.server.getEndpoint() + 'upload-file'
-      }, function (err, response, body) {
-        assert.strictEqual(err, null)
-        assert.strictEqual(body, 'file.txt')
-        done()
-      })
-      req.form().append('file', 'John Doe', {
+      const form = new MultipartForm()
+
+      form.append('file', 'John Doe', {
         filename: 'file.txt',
         contentType: 'text/plain'
       })
+
+      rock.post({
+        url: app.server.getEndpoint() + 'upload-file',
+        headers: form.getHeaders()
+      }, form.getBuffer(), function (err, response, body) {
+        assert.strictEqual(err, null)
+        assert.strictEqual(body.toString(), 'file.txt')
+        done()
+      })
     })
 
     it('should upload file', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'empty-schema'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
@@ -221,21 +226,21 @@ describe('Server', () => {
     })
 
     it('should execute a function and not a schema', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'func'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'OK!')
+        assert.strictEqual(body.toString(), 'OK!')
         done()
       })
     })
 
     it('should get result from api2', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'from-api2'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'Hello')
+        assert.strictEqual(body.toString(), 'Hello')
         done()
       })
     })
@@ -252,10 +257,9 @@ describe('Server', () => {
         }]
       }]
 
-      request.post({
-        url: app.server.getEndpoint() + 'schema-with-in',
-        json: { accounts: accounts }
-      }, function (err, response, body) {
+      rock.postJSON({
+        url: app.server.getEndpoint() + 'schema-with-in'
+      }, { accounts: accounts }, function (err, response, body) {
         assert.strictEqual(err, null)
         assert.strictEqual(response.statusCode, 201)
         assert.deepStrictEqual(body, {
@@ -279,10 +283,9 @@ describe('Server', () => {
         }]
       }]
 
-      request.post({
-        url: app.server.getEndpoint() + 'schema-with-in',
-        json: { accounts: accounts }
-      }, function (err, response, body) {
+      rock.postJSON({
+        url: app.server.getEndpoint() + 'schema-with-in'
+      }, { accounts: accounts }, function (err, response, body) {
         assert.strictEqual(err, null)
         assert.strictEqual(response.statusCode, 400)
         assert.deepStrictEqual(body, {
@@ -306,10 +309,9 @@ describe('Server', () => {
         }]
       }]
 
-      request.post({
-        url: app.server.getEndpoint() + 'schema-with-in',
-        json: { accounts: accounts }
-      }, function (err, response, body) {
+      rock.postJSON({
+        url: app.server.getEndpoint() + 'schema-with-in'
+      }, { accounts: accounts }, function (err, response, body) {
         assert.strictEqual(err, null)
         assert.deepStrictEqual(body, {
           success: false,
@@ -321,7 +323,7 @@ describe('Server', () => {
     })
 
     it('should return an error when there is an in schema with a GET', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'get-with-in'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
@@ -336,11 +338,11 @@ describe('Server', () => {
     })
 
     it('should add route even if it does not start with /', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'forgot-slash'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, 'OK!')
+        assert.strictEqual(body.toString(), 'OK!')
         done()
       })
     })
@@ -468,7 +470,7 @@ describe('Server', () => {
         message: 'Success'
       }
 
-      request.get(app.server.getEndpoint() + 'schema-a', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-a', function (err, response, body) {
         assert.strictEqual(err, null)
         body = JSON.parse(body)
         assert.deepStrictEqual(body, expected)
@@ -486,7 +488,7 @@ describe('Server', () => {
         message: ''
       }
 
-      request.get(app.server.getEndpoint() + 'schema-b', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-b', function (err, response, body) {
         assert.strictEqual(err, null)
         body = JSON.parse(body)
         assert.deepStrictEqual(body, expected)
@@ -504,7 +506,7 @@ describe('Server', () => {
         message: ''
       }
 
-      request.get(app.server.getEndpoint() + 'schema-c', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-c', function (err, response, body) {
         assert.strictEqual(err, null)
         body = JSON.parse(body)
         assert.deepStrictEqual(body, expected)
@@ -513,15 +515,15 @@ describe('Server', () => {
     })
 
     it('should execute a query in function without schema', (done) => {
-      request.get(app.server.getEndpoint() + 'func2', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'func2', function (err, response, body) {
         assert.strictEqual(err, null)
-        assert.strictEqual(body, '3')
+        assert.strictEqual(body.toString(), '3')
         done()
       })
     })
 
     it('should execute a query and format returned data', (done) => {
-      request.get(app.server.getEndpoint() + 'schema-d', function (err, response, body) {
+      rock.get(app.server.getEndpoint() + 'schema-d', function (err, response, body) {
         assert.strictEqual(err, null)
         body = JSON.parse(body)
         assert.deepStrictEqual(body, {
@@ -538,7 +540,7 @@ describe('Server', () => {
     })
 
     it('should execute a query with req params and format returned data', (done) => {
-      request.post({
+      rock.post({
         url: app.server.getEndpoint() + 'my-post-e',
         form: {
           firstname: 'John',
@@ -564,7 +566,7 @@ describe('Server', () => {
     })
 
     it('should not crash if data does not exists', (done) => {
-      request.post({
+      rock.post({
         url: app.server.getEndpoint() + 'my-post-e',
         form: {
           id: 1
@@ -587,168 +589,37 @@ describe('Server', () => {
     })
   })
 
-  describe('Clustering', () => {
+  describe('CLI options', () => {
     before((done) => {
       process.env.HEARTH_SERVER_PATH = path.join(__dirname, 'datasets', 'myApp', 'server')
       done()
     })
 
     afterEach((done) => {
-      stopCluster(done)
+      stopServer(done)
     })
 
-    it('should not start a cluster when --cluster = 0', (done) => {
-      executeCluster('0', '8080', () => {
-        request.get('http://localhost:8080/user', (err, response, body) => {
-          body = JSON.parse(body)
+    it('should start and answer on the default port', (done) => {
+      startServer('8080', () => {
+        rock.get('http://localhost:8080/user', (err, response, body) => {
           assert.strictEqual(err, null)
+          body = JSON.parse(body)
           assert.strictEqual(body.id, null)
           done()
         })
       })
-    }).timeout(5000)
+    }).timeout(20000)
 
     it('should take the port send via CLI', (done) => {
-      executeCluster('1', '4000', () => {
-        request.get('http://localhost:4000/user', (err, response, body) => {
+      startServer('4000', () => {
+        rock.get('http://localhost:4000/user', (err, response, body) => {
           assert.strictEqual(err, null)
-          assert.strictEqual(/"id":\d}/.test(response.body), true)
+          // Answering at all on 4000 proves --port was honoured
+          assert.strictEqual(body.toString(), '{"id":null}')
           done()
         })
       })
-    }).timeout(5000)
-
-    it('should load balance between all workers 2 workers', (done) => {
-      executeCluster('2', '8080', () => {
-        let _nbQueries = 200
-        let _waitedResponse = _nbQueries
-        let _workerResponse = { 1: 0, 2: 0 }
-
-        let test = (err, response, body) => {
-          assert.strictEqual(err, null)
-          body = JSON.parse(body)
-          _workerResponse[body.id] += 1
-          _waitedResponse -= 1
-
-          if (_waitedResponse === 0) {
-            assert.strictEqual(_workerResponse[1] > 80, true)
-            assert.strictEqual(_workerResponse[2] > 80, true)
-            assert.strictEqual(_workerResponse[1] + _workerResponse[2], _nbQueries)
-            done()
-          }
-        }
-
-        for (let i = 0; i < _nbQueries; i++) {
-          request.get('http://localhost:8080/user', test)
-        }
-      })
-    })
-
-    it('should overwrite number of cluster via CLI and load balance between them', (done) => {
-      executeCluster('4', '8080', () => {
-        let _nbQueries = 200
-        let _waitedResponse = _nbQueries
-        let _workerResponse = { 1: 0, 2: 0, 3: 0, 4: 0 }
-
-        let test = (err, response, body) => {
-          assert.strictEqual(err, null)
-          body = JSON.parse(body)
-          _workerResponse[body.id] += 1
-          _waitedResponse -= 1
-
-          if (_waitedResponse === 0) {
-            assert.strictEqual(_workerResponse[1] > 30, true)
-            assert.strictEqual(_workerResponse[2] > 30, true)
-            assert.strictEqual(_workerResponse[3] > 30, true)
-            assert.strictEqual(_workerResponse[4] > 30, true)
-            assert.strictEqual(_workerResponse[1] + _workerResponse[2] + _workerResponse[3] + _workerResponse[4], _nbQueries)
-            done()
-          }
-        }
-
-        for (let i = 0; i < _nbQueries; i++) {
-          request.get('http://localhost:8080/user', test)
-        }
-      })
-    })
-
-    it('should restart automatically when a worker die. It should still have 4 workers at the end', (done) => {
-      executeCluster('4', '8080', () => {
-        let _nbQueries = 200
-        let _waitedResponse = _nbQueries
-        let _workerResponse = {}
-        let _nbSuccess = 0
-        let _nbCrash = 0
-
-        let crash = () => {
-          request.get('http://localhost:8080/crash', function (err, response, body) {
-            assert.notStrictEqual(err, null)
-            _waitedResponse -= 1
-            _nbCrash += 1
-            if (_waitedResponse === 0) {
-              _endOfTest()
-            }
-          })
-        }
-
-        let sendRequest = () => {
-          request.get('http://localhost:8080/user', function (err, response, body) {
-            assert.strictEqual(err, null)
-            _waitedResponse -= 1
-            _nbSuccess += 1
-            if (_waitedResponse === 0) {
-              _endOfTest()
-            }
-          })
-        }
-
-        let callback = (err, response, body) => {
-          assert.strictEqual(err, null)
-          body = JSON.parse(body)
-          _waitedResponse -= 1
-
-          if (_workerResponse[body.id]) {
-            _workerResponse[body.id] += 1
-          } else {
-            _workerResponse[body.id] = 1
-          }
-
-          if (_waitedResponse === 0) {
-            let _nbActiveWorker = 0
-            let _total = 0
-
-            for (let _workerId in _workerResponse) {
-              _nbActiveWorker += 1
-              _total += _workerResponse[_workerId]
-            }
-            assert.strictEqual(_nbActiveWorker, 4)
-            assert.strictEqual(_total, _nbQueries)
-            done()
-          }
-        }
-
-        let _endOfTest = () => {
-          assert.strictEqual(_nbSuccess + _nbCrash, _nbQueries)
-          _waitedResponse = _nbQueries
-
-          // Wait until all workers are restarted for the test
-          setTimeout(() => {
-            for (let i = 0; i < _nbQueries; i++) {
-              request.get('http://localhost:8080/user', callback)
-            }
-          }, 400)
-        }
-
-        for (let i = 0; i < _nbQueries; i++) {
-          // Crash server every 20 * 10ms
-          if (i % 20 === 0) {
-            setTimeout(crash, 15 * i)
-          } else {
-            setTimeout(sendRequest, 15 * i)
-          }
-        }
-      })
-    }).timeout(10000)
+    }).timeout(20000)
   })
 })
 
@@ -758,30 +629,93 @@ describe('Server', () => {
  * @param {String} port Application port
  * @param {Function} callback
  */
-function executeCluster (nbCluster, port, callback) {
+function startServer (port, callback) {
   const _serverPath = path.join(__dirname, 'datasets', 'myApp', 'server')
   const binPath = path.join(__dirname, '..', 'bin', 'hearthjs')
 
-  program = spawn(binPath, ['start', 'prod', '--cluster', nbCluster, '--port', port], { cwd: _serverPath })
+  program = spawn(binPath, ['start', 'prod', '--port', port], { cwd: _serverPath })
   program.stdout.pipe(process.stdout)
   program.stderr.pipe(process.stderr)
 
-  setTimeout(() => {
+  waitForServer(port, 20000, (err) => {
+    if (err) {
+      throw err
+    }
+
     return callback()
-  }, 1500)
+  })
 }
+
+/**
+ * Poll the port until the spawned server answers. A fixed delay raced with a
+ * busy machine and the requests went out before the server was listening.
+ * @param {String} port Port to poll
+ * @param {Number} timeout Maximum time to wait in ms
+ * @param {Function} callback
+ */
+function waitForServer (port, timeout, callback) {
+  const _deadline = Date.now() + timeout
+
+  const check = () => {
+    const socket = net.connect({ port: parseInt(port, 10), host: '127.0.0.1' }, () => {
+      socket.destroy()
+      return callback(null)
+    })
+
+    socket.on('error', () => {
+      socket.destroy()
+
+      if (Date.now() >= _deadline) {
+        return callback(new Error(`Server did not start on port ${port} within ${timeout}ms`))
+      }
+
+      return setTimeout(check, 50)
+    })
+  }
+
+  check()
+}
+
 
 /**
  * Stop started cluster
  * @param {Function} callback
  */
-function stopCluster (callback) {
-  if (program) {
-    process.kill(program.pid)
-    program = null
+function stopServer (callback) {
+  const _child = program
+
+  program = null
+
+  // Already exited (a test crashed it on purpose). Never fall back to
+  // process.kill(pid): a recycled pid would send the signal elsewhere.
+  if (_child === null || _child === undefined ||
+      _child.exitCode !== null || _child.signalCode !== null) {
+    return callback()
   }
 
-  setTimeout(() => {
+  let _finished = false
+
+  const _finish = () => {
+    if (_finished === true) {
+      return
+    }
+
+    _finished = true
+    clearTimeout(_insist)
+    clearTimeout(_giveUp)
     return callback()
-  }, 200)
+  }
+
+  // child.kill() goes through the libuv process handle, so it can only ever
+  // reach this child, even if its pid has since been reused
+  _child.once('exit', _finish)
+  _child.kill('SIGTERM')
+
+  const _insist = setTimeout(() => {
+    if (_child.exitCode === null && _child.signalCode === null) {
+      _child.kill('SIGKILL')
+    }
+  }, 5000)
+
+  const _giveUp = setTimeout(_finish, 8000)
 }

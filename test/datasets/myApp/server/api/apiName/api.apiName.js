@@ -1,5 +1,6 @@
 const hearth = require('../../../../../../lib/index')
-const t = require('../../../../../../lib/translate').t
+// `t` used to be the translation marker, it only ever returned its key
+const t = (key) => key
 const multer = require('multer')
 
 let upload = multer({ dest: '../uploads/' })
@@ -10,6 +11,66 @@ let myMiddleware = function (req, res, next) {
 }
 
 const schemas = {
+  // Used to check the log level follows the response status code
+  // Answers, then answers again from a callback
+  answerTwice: {
+    function: (req, res) => {
+      res.send('first')
+      setImmediate(() => res.send('second'))
+    }
+  },
+
+  // Sets a header after the answer was already sent
+  headerTooLate: {
+    function: (req, res) => {
+      res.send('sent')
+      setImmediate(() => res.setHeader('x-late', '1'))
+    }
+  },
+
+  // A body JSON.stringify cannot handle, answered from a callback
+  circularBody: {
+    function: (req, res) => {
+      const _circular = { name: 'x' }
+
+      _circular.self = _circular
+      setImmediate(() => res.status(200).json(_circular))
+    }
+  },
+
+  // Held open on purpose: lets a test close the server mid-request.
+  // It signals when the handler is entered so the test never has to guess how
+  // long the request takes to arrive, and it answers when the test says so.
+  slowShutdown: {
+    function: (req, res) => {
+      process.once('test:release-slow-shutdown', () => res.send('finished'))
+      process.emit('test:slow-shutdown-received')
+    }
+  },
+
+  // Never answers, so only the shutdown timeout can end the request
+  neverAnswers: {
+    function: (req, res) => {
+      process.emit('test:never-answers-received')
+    }
+  },
+
+  // Used to check the contextual fields appended to the request log line
+  getLogContext: {
+    function: (req, res) => {
+      req.hearth_log = { account: 4821, template: 'my invoice.odt', skipped: null }
+      return res.send('ok')
+    }
+  },
+
+  getStatus404: {
+    function: (req, res) => res.status(404).send('not found')
+  },
+
+  getStatus500: {
+    function: (req, res) => res.status(500).send('boom')
+  },
+
   getSchemaA: {
     before: (req, res, next) => {
       next(t('Error...', 'fr'), 402)
@@ -134,6 +195,14 @@ hearth.api.define('ApiName', schemas, (server) => {
   server.get('/get-with-in', 'getWithIn')
   server.get('forgot-slash', 'schemaWithFunction')
   server.get('schema-with-roles', 'schemaWithRoles')
+  server.get('/answer-twice', 'answerTwice')
+  server.get('/header-too-late', 'headerTooLate')
+  server.get('/circular-body', 'circularBody')
+  server.get('/slow-shutdown', 'slowShutdown')
+  server.get('/never-answers', 'neverAnswers')
+  server.get('/log-context', 'getLogContext')
+  server.get('/status-404', 'getStatus404')
+  server.get('/status-500', 'getStatus500')
 })
 
 function myFunc (req, res) {

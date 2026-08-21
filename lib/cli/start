@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const program = require('commander')
+const { program } = require('commander')
 const server = require('../server')
 const debug = require('debug')
 
@@ -8,8 +8,6 @@ let modeValue
 program
   .arguments('<mode>')
   .option('-p, --port <port>', 'Server port')
-  .option('-c, --cluster <cluster>', 'Number of cluster')
-  .option('-l, --lang <lang>', 'Default server lang')
   .option('--db_port <dbPort>', 'Database port')
   .option('--db_host <dHhost>', 'Database host')
   .option('--db_name <dbName>', 'Database name')

@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const converter = require('../lib/converter')
 const assert = require('assert')
 
@@ -1463,6 +1462,7 @@ describe('Converter', () => {
   describe('Get list of new ID', () => {
     describe('Dataset #1', () => {
       // Model is here to help understanding the used model in test
+      // eslint-disable-next-line no-unused-vars
       let model = [{
         id: ['<<id>>'],
         arr: [{
@@ -1548,6 +1548,7 @@ describe('Converter', () => {
 
     describe('Dataset #2', () => {
       // Model is here to help understanding the used model in test
+      // eslint-disable-next-line no-unused-vars
       let model = [{
         id: ['<<id>>'],
         arr: [{
@@ -1632,6 +1633,7 @@ describe('Converter', () => {
 
     describe('Dataset #3', () => {
       // Model is here to help understanding the used model in test
+      // eslint-disable-next-line no-unused-vars
       let model = {
         arr: [{
           id: ['<<id2>>']

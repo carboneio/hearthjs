@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const api = require('../lib/api')
 const assert = require('assert')
 

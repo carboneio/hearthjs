@@ -1,8 +1,7 @@
-/* eslint-env mocha */
 const app = require('../lib/')
 const assert = require('assert')
 const path = require('path')
-const request = require('request')
+const rock = require('rock-req')
 const validateMailAddon = require('./datasets/addons/validateMailAddon')
 const roleAddon = require('./datasets/addons/roleAddon')
 const roleAddon2 = require('./datasets/addons/roleAddon2')
@@ -48,7 +47,7 @@ describe('Addons', () => {
     })
 
     it('should acces route /schema-b', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'schema-b'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
@@ -60,7 +59,7 @@ describe('Addons', () => {
     })
 
     it('should not acces route /schema-c', (done) => {
-      request.get({
+      rock.get({
         url: app.server.getEndpoint() + 'schema-c'
       }, function (err, response, body) {
         assert.strictEqual(err, null)
@@ -72,7 +71,7 @@ describe('Addons', () => {
     })
 
     it('should validate email', (done) => {
-      request.post({
+      rock.post({
         url: app.server.getEndpoint() + 'schema-a',
         form: {
           mail: 'toto@gmail.com'
@@ -87,7 +86,7 @@ describe('Addons', () => {
     })
 
     it('should not validate email', (done) => {
-      request.post({
+      rock.post({
         url: app.server.getEndpoint() + 'schema-a',
         form: {
           mail: 'totogmail.com'

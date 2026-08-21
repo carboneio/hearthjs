@@ -1,11 +1,10 @@
-/* eslint-env mocha */
 const app = require('../lib/')
 const assert = require('assert')
 const path = require('path')
 const fs = require('fs')
 const logger = require('../lib/logger')
 const TestClient = require('../lib/testClient')
-const request = require('request')
+const rock = require('rock-req')
 
 describe('Test client', () => {
   before((done) => {
@@ -174,13 +173,13 @@ describe('Test client', () => {
     })
 
     it('should execute an unwrapped request', (done) => {
-      request.get({
+      rock.get({
         url: user.getCompleteUrl('/test')
       }, (err, response, body) => {
         body = JSON.parse(body)
         assert.strictEqual(err, null)
         assert.strictEqual(body.success, false)
-        request.get({
+        rock.get({
           url: user.getCompleteUrl('/test'),
           headers: {
             Cookie: user.cookie

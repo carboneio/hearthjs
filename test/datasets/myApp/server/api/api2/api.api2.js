@@ -1,6 +1,6 @@
 const hearth = require('../../../../../../lib/index')
-const t = require('../../../../../../lib/translate').t
-const cluster = require('cluster')
+// `t` used to be the translation marker, it only ever returned its key
+const t = (key) => key
 
 const schemas = {
   getSchemaA: {
@@ -23,13 +23,7 @@ const schemas = {
 
   user: {
     before: (req, res, next) => {
-      let _id = null
-
-      if (cluster.worker) {
-        _id = cluster.worker.id
-      }
-
-      return res.json({ id: _id })
+      return res.json({ id: null })
     }
   }
 }

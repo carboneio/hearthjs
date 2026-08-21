@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const helper = require('../lib/helper')
 const assert = require('assert')
 

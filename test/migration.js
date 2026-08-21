@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const migration = require('../lib/migration')
 const datasets = require('../lib/datasets')
 const assert = require('assert')

@@ -1,5 +1,6 @@
 const hearth = require('../../../../../../lib/index')
-const t = require('../../../../../../lib/translate').t
+// `t` used to be the translation marker, it only ever returned its key
+const t = (key) => key
 const cluster = require('cluster')
 
 const schemas = {

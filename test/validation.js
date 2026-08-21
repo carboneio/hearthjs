@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const validation = require('../lib//validation')
 const assert = require('assert')
 

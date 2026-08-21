@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-const program = require('commander')
+const { program } = require('commander')
 const server = require('../server')
 const debug = require('debug')
 const watch = require('../watch')
-const cluster = require('cluster')
 
 const colors = {
   greenBackground: '\u001b[42;1m',
@@ -15,8 +14,6 @@ let modeValue
 program
   .arguments('<mode>')
   .option('-p, --port <port>', 'Server port')
-  .option('-c, --cluster <cluster>', 'Number of cluster')
-  .option('-l, --lang <lang>', 'Default server lang')
   .option('--db_port <dbPort>', 'Database port')
   .option('--db_host <dHhost>', 'Database host')
   .option('--db_name <dbName>', 'Database name')
@@ -36,32 +33,26 @@ program
 
     // Start watching files
     watch.watchServerFiles((event, filename) => {
-      if (cluster.isMaster) {
-        console.log(`File ${filename} has changed, crashing server and run it with new changes...`)
-      }
+      console.log(`File ${filename} has changed, crashing server and run it with new changes...`)
 
       server.close('SIGTERM', (err) => {
         if (err) {
           console.log('An error occured while stopping server: ', err)
         }
 
-        if (cluster.isMaster) {
-          server.run(mode, process.env.HEARTH_SERVER_PATH, options, (err) => {
-            if (err) {
-              console.log('An error occured while running server: ', err)
-              return process.exit(1)
-            }
-          })
-        }
+        server.run(mode, process.env.HEARTH_SERVER_PATH, options, (err) => {
+          if (err) {
+            console.log('An error occured while running server: ', err)
+            return process.exit(1)
+          }
+        })
       })
     }, (err) => {
       if (err) {
         console.log('An error occured while watching files: ', err)
       }
 
-      if (cluster.isMaster) {
-        console.log(`${colors.greenBackground}        DEBUG MODE        ${colors.reset}\n`)
-      }
+      console.log(`${colors.greenBackground}        DEBUG MODE        ${colors.reset}\n`)
       server.run(mode, process.env.HEARTH_SERVER_PATH, options, (err) => {
         if (err) {
           console.log('An error occured while running server: ', err)

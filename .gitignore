@@ -1,10 +1,34 @@
+# Dependencies
 node_modules
+
+# Dependencies are pinned exactly in package.json, the lock file is not tracked
 package-lock.json
 package-lock.json.*
-.*
-#*#
+
+# Coverage and generated documentation
+coverage
 _docpress
 
+# Dotfiles (editor settings, .DS_Store, .nyc_output...) with the ones we keep
+.*
+#*#
 !.gitkeep
 !.gitignore
-coverage
+!.github
+!.github/**
+
+# Created by running the CLI from the repository root: `hearthjs` builds a
+# server/ directory next to the current working directory. Anchored with a
+# leading slash so the test fixtures in test/datasets/*/server stay tracked.
+/server/
+
+# Log files hearthjs writes next to the process
+/*.log
+
+# Written into the fixture applications while the test suite runs
+test/datasets/*/server/logs/*.log
+test/datasets/myApp/server/index.js
+test/datasets/myApp/server/test.test
+test/datasets/cronApp/server/cron/cron1
+test/datasets/cronApp/server/cron/cron2
+test/datasets/migrationApp2/server/cron/

@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const datasets = require('../lib/datasets')
 const assert = require('assert')
 const app = require('../lib')

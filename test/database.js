@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const db = require('../lib/database')
 const assert = require('assert')
 const path = require('path')

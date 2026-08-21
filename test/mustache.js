@@ -1,4 +1,3 @@
-/* eslint-env mocha */
 const mustache = require('../lib/mustache')
 const assert = require('assert')
 const path = require('path')

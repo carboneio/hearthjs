@@ -1,6 +1,7 @@
 const hearth = require('../../../../../../lib/index')
 const multer = require('multer')
-const t = require('../../../../../../lib/translate').t
+// `t` used to be the translation marker, it only ever returned its key
+const t = (key) => key
 
 let upload = multer({ dest: '../uploads/' })
 

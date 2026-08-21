@@ -1,11 +1,9 @@
 #!/usr/bin/env node
-const program = require('commander')
+const { program } = require('commander')
 const migrationCli = require('../migrationCLI')
 
-program
-  .storeOptionsAsProperties(false)
-  .passCommandToAction(false)
-
+// storeOptionsAsProperties(false) / passCommandToAction(false) were removed in
+// commander 7: both are now the default behaviour
 program
   .arguments('[mode]')
   .option('-v, --version <version>', 'Migrate to a specific version')
