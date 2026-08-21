@@ -1,0 +1,3 @@
+# DB and server suites need far more than mocha's 2s default on a loaded CI
+# runner. Individual tests still override this when they need longer.
+timeout: 30000
