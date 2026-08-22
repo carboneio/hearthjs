@@ -185,6 +185,48 @@ describe('Server', () => {
       })
     })
 
+    it('should decode route params like express did', (done) => {
+      // express decoded each captured param, so an encoded url stays usable as
+      // an id. Routing still matches the raw path, which keeps %2F in one segment
+      const _cases = [
+        ['foo%2Fbar', 'foo/bar'],
+        ['https%3A%2F%2Fexample.com%2F.well-known', 'https://example.com/.well-known'],
+        ['a%20b', 'a b'],
+        ['%E2%9D%A4', '\u2764'],
+        ['foo+bar', 'foo+bar'],
+        ['42', '42']
+      ]
+      let _remaining = _cases.length
+
+      for (const [_sent, _expected] of _cases) {
+        rock.delete({ url: app.server.getEndpoint() + 'schema-f/' + _sent }, (err, response, body) => {
+          assert.strictEqual(err, null)
+          assert.strictEqual(body.toString(), _expected, _sent)
+
+          if (--_remaining === 0) {
+            done()
+          }
+        })
+      }
+    })
+
+    it('should answer 400 on a malformed param instead of passing it through', (done) => {
+      let _remaining = 2
+
+      for (const _sent of ['%foobar', '100%']) {
+        rock.delete({ url: app.server.getEndpoint() + 'schema-f/' + _sent }, (err, response, body) => {
+          assert.strictEqual(err, null)
+          assert.strictEqual(response.statusCode, 400, _sent)
+          // The raw value must not reach the handler
+          assert.strictEqual(body.toString().includes(_sent), false, _sent)
+
+          if (--_remaining === 0) {
+            done()
+          }
+        })
+      }
+    })
+
     it('should pass through middleware', (done) => {
       rock.get({
         url: app.server.getEndpoint() + 'middleware'

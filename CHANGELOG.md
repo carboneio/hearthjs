@@ -158,6 +158,21 @@ them from coming back.
 
 #### 🐛 Fixes
 
+- **Route params are decoded again.** express ran every captured param through
+  `decodeURIComponent`; the new router does not, so `/client/https%3A%2F%2F...`
+  reached the handler still encoded. Parity is restored, and it follows express
+  exactly: only `req.params` is decoded, never `req.url`, `req.path` or the query
+  string. Routing still matches the raw path, which is what keeps an encoded `%2F`
+  inside a single `:param` segment instead of splitting it. A malformed escape
+  (`%foobar`, `100%`) answers **400** rather than passing the raw value through,
+  and decoding happens exactly once, so a double encoded `%252e%252e%252f` stays
+  inert instead of becoming `../`. Costs 22 ns per request when no value holds an
+  escape.
+
+  If you worked around this in application code, **remove the workaround**:
+  decoding a value twice is exactly the bypass the single decode is there to
+  prevent.
+
 - `helper.genericQueue` threw `Maximum call stack size exceeded` when the handler
   called `next()` synchronously, crashing at about 4 400 items. 200 000 items now
   run in a few milliseconds. It also no longer empties the array it is given.

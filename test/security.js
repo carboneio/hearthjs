@@ -1,6 +1,7 @@
 const assert = require('assert')
 const validation = require('../lib/validation')
 const server = require('../lib/server')
+const expressCompat = require('../lib/expressCompat')
 
 /**
  * Each case here was demonstrated against the framework before being fixed.
@@ -136,6 +137,39 @@ describe('Security', () => {
         })
       })
     }).timeout(10000)
+  })
+
+  describe('route param decoding', () => {
+    it('should decode exactly once, so a double encoded traversal stays inert', () => {
+      // Decoding twice would turn this into ../, which is the classic bypass
+      const _req = { params: { p: '%252e%252e%252fetc%252fpasswd' } }
+
+      assert.strictEqual(expressCompat.decodeParams(_req), true)
+      assert.strictEqual(_req.params.p, '%2e%2e%2fetc%2fpasswd')
+    })
+
+    it('should refuse a malformed escape rather than pass the raw value on', () => {
+      for (const _value of ['%foobar', '100%', '%G1', '%E0%A4%A']) {
+        const _req = { params: { p: _value } }
+
+        assert.strictEqual(expressCompat.decodeParams(_req), false, _value)
+      }
+    })
+
+    it('should leave a value holding no escape untouched', () => {
+      // Notably '+' stays a '+', which is why decodeURIComponent is the right
+      // primitive and querystring.unescape is not
+      const _req = { params: { a: 'foo+bar', b: '42', c: '' } }
+
+      assert.strictEqual(expressCompat.decodeParams(_req), true)
+      assert.deepStrictEqual(_req.params, { a: 'foo+bar', b: '42', c: '' })
+    })
+
+    it('should not touch anything when there are no params', () => {
+      assert.strictEqual(expressCompat.decodeParams({ params: undefined }), true)
+      assert.strictEqual(expressCompat.decodeParams({ params: null }), true)
+      assert.strictEqual(expressCompat.decodeParams({}), true)
+    })
   })
 
   describe('type confusion in validation', () => {

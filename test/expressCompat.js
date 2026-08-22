@@ -44,7 +44,12 @@ const cases = [
   ['req.method + url', 'get', '/req-basic', (req, res) => res.json({ m: req.method, u: req.url })],
   ['post body echo', 'post', '/echo', (req, res) => res.json({ body: req.body })],
   ['status then end', 'get', '/status-end', (req, res) => { res.status(204); res.end() }],
-  ['sendFile', 'get', '/send-file', (req, res) => res.sendFile(fixtureFile)]
+  ['sendFile', 'get', '/send-file', (req, res) => res.sendFile(fixtureFile)],
+  // express decoded the captured param but left the url and the path raw, so
+  // routing still matches on %2F rather than on a real slash
+  ['encoded param', 'get', '/enc/:enc', (req, res) => res.json({
+    id: req.params.enc, url: req.url, path: req.path
+  })]
 ]
 
 /**
@@ -70,7 +75,8 @@ function call (port, testCase, callback) {
   // Fill route params and add a query string so both servers get the same input
   const realUrl = url
     .replace(':postId', '77')
-    .replace(':id', '42') + '?a=1&b=two'
+    .replace(':id', '42')
+    .replace(':enc', 'https%3A%2F%2Fexample.com%2Fa%20b') + '?a=1&b=two'
 
   const options = {
     url: `http://localhost:${port}${realUrl}`,
