@@ -224,7 +224,7 @@ patched versions and `npm audit` reports nothing.
 
 #### ✅ Tests & tooling
 
-- **534 tests** (was 431), green on Node 20, 22, 24 and 26. Full run **38s -> 12s**.
+- **545 tests** (was 431), green on Node 20, 22, 24 and 26. Full run **38s -> 12s**.
 - New suites: `expressCompat` (25 differential tests running the same handler on
   express and on restana), `gracefulShutdown`, `crashSafety`, `security`,
   `asyncSafety`, `performance` (guards the complexity of `sqlToJson`), plus
@@ -236,6 +236,11 @@ patched versions and `npm audit` reports nothing.
   configuration, so linting never ran.
 - `.github/workflows/ci.yml` added: the suite on Node 20/22/24/26 against
   PostgreSQL 16, plus lint and `npm audit`. Actions pinned by commit SHA.
+- `.mocharc.yml` added, with a 30 s timeout. The project had no mocha
+  configuration, so every suite that talks to PostgreSQL was bounded by mocha's
+  **2 s default** — fine locally, but a loaded CI runner blew through it and the
+  timed out test's callbacks then ran on tables its own `after` hook had already
+  dropped. Individual tests still raise it where they need to.
 
 
 ### v4.0.0
