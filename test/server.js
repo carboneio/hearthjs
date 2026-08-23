@@ -185,6 +185,46 @@ describe('Server', () => {
       })
     })
 
+    it('should report what is running on startup', () => {
+      const _lines = []
+      const _realLog = logger.log
+
+      logger.log = (msg) => _lines.push(String(msg))
+      app.server._logStartup('prod')
+      logger.log = _realLog
+
+      const _joined = _lines.join('\n')
+
+      // The facts an incident starts from: build, process, endpoint, database
+      assert.strictEqual(_joined.includes(`hearthjs ${require('../package.json').version}`), true, _joined)
+      assert.strictEqual(_joined.includes(`pid ${process.pid}`), true, _joined)
+      assert.strictEqual(/\n {2}listening\s+\d+\.\d+\.\d+\.\d+:\d+/.test(_joined), true, _joined)
+      assert.strictEqual(_joined.includes('hearth_test@'), true, _joined)
+      assert.strictEqual(_joined.includes('routes'), true, _joined)
+      assert.strictEqual(/\n {2}ready\s+\d+ms/.test(_joined), true, _joined)
+      // A password must never reach a log line
+      assert.strictEqual(/password/i.test(_joined), false, _joined)
+    })
+
+    it('should warn about the settings that only hurt once in trouble', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realStdout = logger._mustLogOnStdout
+      const _realConfig = app.server.config
+
+      logger.log = (msg, level) => _lines.push(`${level} ${msg}`)
+      logger._mustLogOnStdout = () => false
+      app.server.config = { APP_REQUEST_TIMEOUT: 0, APP_GRACEFUL_SHUTDOWN: false }
+      app.server._logStartupWarnings('prod')
+      logger.log = _realLog
+      logger._mustLogOnStdout = _realStdout
+      app.server.config = _realConfig
+
+      assert.strictEqual(_lines.length, 3, _lines.join('\n'))
+      assert.strictEqual(_lines.every((l) => l.startsWith('warn')), true, _lines.join('\n'))
+      assert.strictEqual(_lines.join('\n').includes('journalctl'), true, _lines.join('\n'))
+    })
+
     it('should decode route params like express did', (done) => {
       // express decoded each captured param, so an encoded url stays usable as
       // an id. Routing still matches the raw path, which keeps %2F in one segment

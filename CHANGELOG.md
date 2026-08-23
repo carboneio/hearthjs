@@ -70,18 +70,38 @@ Attach context with `req.hearth_log = {...}`, or once for every route with a
 `getLogContext(req)` export in `server/index.js`. `APP_LOG_REQUEST_START=true`
 restores the "started" line (with the id, to pair them).
 
-**11. Logs can go to stdout (`APP_LOG_STDOUT`)** — in production hearthjs wrote
+**11. The startup banner reports what is actually running.** It used to print the
+query timeout, the mode, the database and the port. It now answers the questions
+an incident starts with:
+
+```
+hearthjs 5.0.0 · node v22.23.2 · pid 744637 · env PRODUCTION
+  listening  0.0.0.0:80
+  database   carbone_account_v2@127.0.0.1:5432 · statement timeout 10s
+  loaded     14 apis · 132 routes · 3 crons · 2 addons
+  timeouts   request 60s · shutdown 10s
+  logs       /srv/app/server/logs/08-23-2026.log · stdout on
+  ready      412ms
+```
+
+The version and pid tie a running process to a build, `loaded` catches an API or
+a cron that silently failed to register, and `ready in` catches a startup that is
+slowly getting worse. It also warns about the settings that only hurt once the
+server is already in trouble: logs not reaching journald in production, a
+disabled request timeout, and graceful shutdown turned off.
+
+**12. Logs can go to stdout (`APP_LOG_STDOUT`)** — in production hearthjs wrote
 nothing to stdout, so `journalctl` showed no application logs at all. Off by
 default; colours are dropped when the output is not a terminal.
 
-**12. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and
+**13. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and
 leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks
 draining answers `Connection: close`, closes idle keep-alive sockets, lets running
 requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms,
 `0` waits forever) caps it; a second signal exits immediately;
 `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
 
-**13. Request timeout is 60 s** instead of node's 300 s default
+**14. Request timeout is 60 s** instead of node's 300 s default
 (`APP_REQUEST_TIMEOUT`, `0` restores it).
 
 #### 🔥 Performance
