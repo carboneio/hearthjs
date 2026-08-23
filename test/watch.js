@@ -156,3 +156,47 @@ describe('Watch', () => {
     })
   })
 })
+
+describe('Test runner watching', () => {
+  const testRunner = require('../lib/test')
+
+  let _watchCalls = 0
+  let _realWatch = null
+  let _realBoot = null
+
+  beforeEach(() => {
+    _watchCalls = 0
+    _realWatch = watch.watchServerFiles
+    _realBoot = testRunner._bootAndRun
+    watch.watchServerFiles = (dirs, statusCb, cb) => {
+      _watchCalls++
+      return cb(null)
+    }
+    // Stop before mocha actually runs: only the wiring is under test
+    testRunner._bootAndRun = (options, callback) => callback(null)
+  })
+
+  afterEach(() => {
+    watch.watchServerFiles = _realWatch
+    testRunner._bootAndRun = _realBoot
+  })
+
+  it('should not watch anything when -s asks for a single run', (done) => {
+    // A reload mid-run wipes the SQL registry under whatever test is in flight
+    testRunner.runTest({ stop: true }, () => {})
+
+    setImmediate(() => {
+      assert.strictEqual(_watchCalls, 0)
+      done()
+    })
+  })
+
+  it('should still watch when the runner is left running', (done) => {
+    testRunner.runTest({}, () => {})
+
+    setImmediate(() => {
+      assert.strictEqual(_watchCalls, 1)
+      done()
+    })
+  })
+})

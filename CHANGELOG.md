@@ -178,6 +178,16 @@ them from coming back.
 
 #### 🐛 Fixes
 
+- **`hearthjs test -s` no longer watches the project.** The runner started the file
+  watcher unconditionally, and its callback reloads the server in process:
+  `server.close()` wipes the SQL registry, so a poll landing mid-suite failed
+  whatever test was in flight with `Unknow SQL file`. `-s` runs the suite once and
+  exits, so there is nothing to watch for. Reproduced deterministically by touching
+  a watched `.sql` file mid-run: 2 tests failed before, 40 pass after.
+- The watcher compares `stat.mtimeMs` rounded to the millisecond rather than
+  building a `Date` on every poll of every watched file. Same granularity, no
+  allocation.
+
 - **Route params are decoded again.** express ran every captured param through
   `decodeURIComponent`; the new router does not, so `/client/https%3A%2F%2F...`
   reached the handler still encoded. Parity is restored, and it follows express
