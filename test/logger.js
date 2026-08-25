@@ -616,3 +616,39 @@ describe('Log file path', () => {
     }
   })
 })
+
+describe('Cached formatting', () => {
+  it('should reuse the formatted date within a second and roll over after it', () => {
+    const _first = logger._getCurrentDateTime(true)
+
+    // Same second: served from the cache, and both forms stay consistent
+    assert.strictEqual(logger._getCurrentDateTime(true), _first)
+    assert.strictEqual(_first.startsWith(logger._getCurrentDateTime(false)), true)
+
+    const _start = Date.now()
+
+    while (Date.now() - _start < 1100) { /* wait out one second */ }
+
+    assert.notStrictEqual(logger._getCurrentDateTime(true), _first)
+  }).timeout(5000)
+
+  it('should forget the cached stdout setting when the logger is initialised', () => {
+    const _realEnv = process.env.APP_LOG_STDOUT
+
+    process.env.APP_LOG_STDOUT = 'true'
+    logger._resetStdoutSetting()
+    assert.strictEqual(logger._mustLogOnStdout(), true)
+
+    delete process.env.APP_LOG_STDOUT
+    // Still cached until something invalidates it
+    assert.strictEqual(logger._mustLogOnStdout(), true)
+
+    logger._resetStdoutSetting()
+    assert.strictEqual(logger._mustLogOnStdout(), false)
+
+    if (_realEnv !== undefined) {
+      process.env.APP_LOG_STDOUT = _realEnv
+    }
+    logger._resetStdoutSetting()
+  })
+})

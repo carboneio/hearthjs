@@ -98,6 +98,7 @@ The version and pid tie a running process to a build, `loaded` catches an API or
 - `validation` no longer rebuilds its rule tables and recompiles its regexes per field: **~21% faster**.
 - Addons are resolved once per route at registration; routes without addons no longer pay for the middleware at all.
 - restana instead of express: **+6.0% throughput**, the compatibility layer costing 1.5 us per request.
+- The logger no longer reads `process.env` and rebuilds the timestamp on every request. `_mustLogOnStdout()` goes from **839 ns to 1.7 ns** and the formatted date is reused within the same second.
 - A production install goes from **48.5 MB / 380 packages to 9.0 MB / 78 packages**.
 
 #### 🔒 Security
