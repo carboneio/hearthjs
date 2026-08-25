@@ -206,6 +206,53 @@ describe('Server', () => {
       assert.strictEqual(/password/i.test(_joined), false, _joined)
     })
 
+    it('should fall back to the configured port when nothing is bound yet', () => {
+      const _realServer = app.server._server
+
+      app.server._server = null
+      assert.strictEqual(app.server._getBoundAddress(), `0.0.0.0:${app.server.config.APP_SERVER_PORT}`)
+      app.server._server = _realServer
+
+      // and reports what it is really bound to once listening
+      assert.strictEqual(/^\d+\.\d+\.\d+\.\d+:\d+$/.test(app.server._getBoundAddress()), true)
+    })
+
+    it('should label a zero timeout by what it actually means', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realConfig = app.server.config
+
+      logger.log = (msg) => _lines.push(String(msg))
+      // 0 disables the request timeout but makes the shutdown wait forever
+      app.server.config = Object.assign({}, _realConfig, {
+        APP_REQUEST_TIMEOUT: 0, APP_SHUTDOWN_TIMEOUT: 0, APP_GRACEFUL_SHUTDOWN: true
+      })
+      app.server._logStartup('prod')
+      logger.log = _realLog
+      app.server.config = _realConfig
+
+      const _timeouts = _lines.find((l) => l.includes('timeouts'))
+
+      assert.strictEqual(_timeouts.includes('request disabled'), true, _timeouts)
+      assert.strictEqual(_timeouts.includes('shutdown no limit'), true, _timeouts)
+    })
+
+    it('should say when graceful shutdown is off rather than print a duration', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realConfig = app.server.config
+
+      logger.log = (msg) => _lines.push(String(msg))
+      app.server.config = Object.assign({}, _realConfig, { APP_GRACEFUL_SHUTDOWN: false })
+      app.server._logStartup('prod')
+      logger.log = _realLog
+      app.server.config = _realConfig
+
+      const _timeouts = _lines.find((l) => l.includes('timeouts'))
+
+      assert.strictEqual(_timeouts.includes('shutdown none'), true, _timeouts)
+    })
+
     it('should warn about the settings that only hurt once in trouble', () => {
       const _lines = []
       const _realLog = logger.log

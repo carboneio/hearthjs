@@ -165,6 +165,36 @@ describe('Security', () => {
       assert.deepStrictEqual(_req.params, { a: 'foo+bar', b: '42', c: '' })
     })
 
+    it('should ignore a polluted Object.prototype', () => {
+      // for..in walks the prototype chain: an inherited value must not be
+      // decoded, and must not be copied onto the params as an own property
+      // eslint-disable-next-line no-extend-native
+      Object.prototype.polluted = 'a%20b'
+
+      try {
+        const _req = { params: { id: 'x%2Fy' } }
+
+        assert.strictEqual(expressCompat.decodeParams(_req), true)
+        assert.deepStrictEqual(Object.keys(_req.params), ['id'])
+        assert.strictEqual(_req.params.id, 'x/y', 'the real param must still decode')
+        assert.strictEqual(Object.prototype.hasOwnProperty.call(_req.params, 'polluted'), false)
+      } finally {
+        delete Object.prototype.polluted
+      }
+    })
+
+    it('should not be tricked into a 400 by a malformed inherited value', () => {
+      // An inherited '%foobar' must not make a legitimate request fail
+      // eslint-disable-next-line no-extend-native
+      Object.prototype.polluted = '%foobar'
+
+      try {
+        assert.strictEqual(expressCompat.decodeParams({ params: { id: 'ok' } }), true)
+      } finally {
+        delete Object.prototype.polluted
+      }
+    })
+
     it('should not touch anything when there are no params', () => {
       assert.strictEqual(expressCompat.decodeParams({ params: undefined }), true)
       assert.strictEqual(expressCompat.decodeParams({ params: null }), true)

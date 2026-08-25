@@ -5,6 +5,8 @@ const os = require('os')
 const converter = require('../lib/converter')
 const mustache = require('../lib/mustache')
 const validation = require('../lib/validation')
+const expressCompat = require('../lib/expressCompat')
+const mustacheLib = require('../lib/mustache')
 
 /**
  * Performance regression tests. They guard algorithmic complexity and the
@@ -305,6 +307,124 @@ describe('Performance', function () {
           done()
         })
       })
+    })
+  })
+
+  describe('mustache loop rendering', () => {
+    const LOOP_TEMPLATE = '{% data.names %} * {{ data.names[i] }}{$PRINT$}{{%}}'
+
+    /**
+     * Render the loop template over `count` items
+     * @param {Number} count Number of items
+     * @param {Function} callback Receives the elapsed milliseconds
+     */
+    function renderItems (count, callback) {
+      const _data = { names: Array.from({ length: count }, (_, i) => `n${i}`) }
+      const _start = process.hrtime.bigint()
+
+      mustacheLib.render(LOOP_TEMPLATE, _data, (err) => {
+        assert.strictEqual(err, null)
+        callback(Number(process.hrtime.bigint() - _start) / 1e6)
+      })
+    }
+
+    it('should build the sql parameters linearly', function (done) {
+      this.timeout(120000)
+
+      // Rebuilding the accumulator with concat per item made this quadratic:
+      // 100k items took 9s, which is a request timeout on its own
+      renderItems(10000, (small) => {
+        renderItems(40000, (large) => {
+          const ratio = large / Math.max(small, 0.001)
+
+          assert.strictEqual(ratio < 10, true,
+            `4x the items cost ${ratio.toFixed(1)}x the time (${small.toFixed(0)}ms -> ${large.toFixed(0)}ms), which is not linear`)
+          done()
+        })
+      })
+    })
+
+    it('should render a large loop well under a request timeout', function (done) {
+      this.timeout(120000)
+
+      renderItems(100000, (ms) => {
+        assert.strictEqual(ms < 5000, true, `100k items took ${ms.toFixed(0)}ms`)
+        done()
+      })
+    })
+  })
+
+  describe('expressCompat.decodeParams', () => {
+    const ITERATIONS = 200000
+
+    /**
+     * Cost of decoding one params shape, in nanoseconds per request
+     * @param {Function} make Builds a fresh req for every call
+     * @returns {Number} Nanoseconds per call
+     */
+    function nsPerCall (make) {
+      const ms = bestOf(() => {
+        for (let i = 0; i < ITERATIONS; i++) {
+          expressCompat.decodeParams(make())
+        }
+      }, 5)
+
+      return (ms * 1e6) / ITERATIONS
+    }
+
+    it('should skip values holding no percent escape', function () {
+      this.timeout(60000)
+
+      // The fast path is an indexOf: dropping it would make every request pay
+      // for decodeURIComponent
+      const plain = nsPerCall(() => ({ params: { a: 'alpha', b: 'beta', c: 'gamma' } }))
+      const escaped = nsPerCall(() => ({ params: { a: 'a%2Fb', b: 'c%2Fd', c: 'e%2Ff' } }))
+
+      assert.strictEqual(plain * 3 < escaped, true,
+        `values without an escape (${plain.toFixed(1)}ns) should be far cheaper than decoded ones (${escaped.toFixed(1)}ns)`)
+    })
+
+    it('should stay cheap on the shapes every request pays for', function () {
+      this.timeout(60000)
+
+      // Catches a gross regression: decoding unconditionally, a regex per param,
+      // a serialization round trip. It cannot see a switch to Object.keys, whose
+      // small array V8 elides, so that one is covered by review, not by timing
+      const empty = nsPerCall(() => ({ params: {} }))
+      const three = nsPerCall(() => ({ params: { a: '1', b: '2', c: '3' } }))
+
+      assert.strictEqual(empty < 200, true, `empty params cost ${empty.toFixed(1)}ns`)
+      assert.strictEqual(three < 600, true, `three plain params cost ${three.toFixed(1)}ns`)
+    })
+
+    it('should stay linear in the number of params', function () {
+      this.timeout(60000)
+
+      /**
+       * Build a params object once: constructing it per call costs more than
+       * the function under test and would hide the complexity
+       * @param {Number} count Number of params
+       * @returns {Object} A req carrying that many params, none escaped
+       */
+      function reqWith (count) {
+        const _params = {}
+
+        for (let i = 0; i < count; i++) {
+          _params[`k${i}`] = `v${i}`
+        }
+
+        return { params: _params }
+      }
+
+      const _one = reqWith(1)
+      const _forty = reqWith(40)
+      const one = nsPerCall(() => _one)
+      const forty = nsPerCall(() => _forty)
+
+      // Measured: linear sits near 120x, a nested loop over the params near
+      // 3500x. 400x separates them with room on both sides
+      assert.strictEqual(forty < one * 400, true,
+        `40 params (${forty.toFixed(1)}ns) against 1 (${one.toFixed(1)}ns) is ${(forty / one).toFixed(0)}x, which is not linear`)
     })
   })
 

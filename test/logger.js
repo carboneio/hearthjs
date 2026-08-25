@@ -11,6 +11,29 @@ const { spawn } = require('child_process')
 
 let program = null
 
+/**
+ * Read the log file until it holds what the test waits for. The log stream
+ * flushes after the response ends, so reading straight away is a race.
+ * @param {String} filePath Log file to read
+ * @param {Function} predicate Receives the content, returns true when ready
+ * @param {Function} callback Receives the content
+ */
+function waitForLog (filePath, predicate, callback) {
+  let _attempts = 0
+
+  const _check = () => {
+    const _content = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : ''
+
+    if (predicate(_content) === true || ++_attempts > 300) {
+      return callback(_content)
+    }
+
+    setTimeout(_check, 10)
+  }
+
+  _check()
+}
+
 describe('Logger', () => {
   before(() => {
     process.env.HEARTH_SERVER_PATH = path.join(__dirname, 'datasets', 'myApp', 'server')
@@ -37,25 +60,26 @@ describe('Logger', () => {
     it('should log one line per request in log file', (done) => {
       rock.get('http://localhost:8080/user', (err, response) => {
         assert.strictEqual(err, null)
-        let _logContent = fs.readFileSync(_logFilePath, 'utf8')
 
-        // One compact completion line, no "started" line by default
-        assert.strictEqual(/08-01-2019 00:00:00 INFO GET \/user 200 \d/.test(_logContent), true, _logContent)
-        assert.strictEqual(_logContent.includes('-->'), false)
-        done()
+        waitForLog(_logFilePath, (c) => /GET \/user 200 \d/.test(c), (_logContent) => {
+          // One compact completion line, no "started" line by default
+          assert.strictEqual(/08-01-2019 00:00:00 INFO GET \/user 200 \d/.test(_logContent), true, _logContent)
+          assert.strictEqual(_logContent.includes('-->'), false)
+          done()
+        })
       })
     })
 
     it('should append the context set on req.hearth_log', (done) => {
       rock.get('http://localhost:8080/log-context', () => {
-        const _logContent = fs.readFileSync(_logFilePath, 'utf8')
-
-        assert.strictEqual(_logContent.includes('GET /log-context 200'), true, _logContent)
-        assert.strictEqual(_logContent.includes('account=4821'), true, _logContent)
-        assert.strictEqual(_logContent.includes('template="my invoice.odt"'), true, _logContent)
-        // null and empty values are skipped
-        assert.strictEqual(_logContent.includes('skipped='), false, _logContent)
-        done()
+        waitForLog(_logFilePath, (c) => c.includes('GET /log-context 200'), (_logContent) => {
+          assert.strictEqual(_logContent.includes('GET /log-context 200'), true, _logContent)
+          assert.strictEqual(_logContent.includes('account=4821'), true, _logContent)
+          assert.strictEqual(_logContent.includes('template="my invoice.odt"'), true, _logContent)
+          // null and empty values are skipped
+          assert.strictEqual(_logContent.includes('skipped='), false, _logContent)
+          done()
+        })
       })
     })
 
@@ -575,3 +599,20 @@ function stopServer (callback) {
 
   const _giveUp = setTimeout(_finish, 8000)
 }
+
+describe('Log file path', () => {
+  it('should report the file the logs go to, and null before a server path is set', () => {
+    const _real = process.env.HEARTH_SERVER_PATH
+
+    process.env.HEARTH_SERVER_PATH = '/tmp/hearth-path-probe'
+    assert.strictEqual(logger._getLogFilePath(),
+      path.join('/tmp/hearth-path-probe', 'logs', `${logger._getCurrentDateTime(false)}.log`))
+
+    delete process.env.HEARTH_SERVER_PATH
+    assert.strictEqual(logger._getLogFilePath(), null)
+
+    if (_real !== undefined) {
+      process.env.HEARTH_SERVER_PATH = _real
+    }
+  })
+})

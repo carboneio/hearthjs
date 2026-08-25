@@ -2,7 +2,7 @@
 
 ### v5.0.0
 
-Requires **Node >= 20**, tested on 20, 22, 24 and 26.
+Requires **Node >= 26**. The suite runs on Node 26 in CI.
 
 #### 🚨 Breaking changes
 
@@ -26,35 +26,19 @@ _cronList['myCron'].cron.status      // before: 'scheduled' | 'stoped' | undefin
 _cronList['myCron'].cron.getStatus() // after:  'idle' | 'running' | 'stopped' | 'destroyed'
 ```
 
-**3. express replaced by restana + `lib/expressCompat.js`** — application code is
-unchanged: `res.status/send/json/sendStatus/set/get/type/location/redirect/cookie/sendFile/locals`
-and `req.get/accepts*/is/path/protocol/secure/hostname/fresh/stale/query` are all
-provided, `ETag` and `304` included. `hearthjs.express` still returns `json()`,
-`urlencoded()`, `raw()`, `text()` and `static()`.
+**3. express replaced by restana + `lib/expressCompat.js`** — application code is unchanged: `res.status/send/json/sendStatus/set/get/type/location/redirect/cookie/sendFile/locals` and `req.get/accepts*/is/path/protocol/secure/hostname/fresh/stale/query` are all provided, `ETag` and `304` included. `hearthjs.express` still returns `json()`, `urlencoded()`, `raw()`, `text()` and `static()`.
 
-Two deliberate differences, both safer: `X-Forwarded-*` is ignored unless
-`APP_TRUST_PROXY` is true (a client could otherwise spoof `req.protocol`), and
-`res.redirect()` no longer emits a clickable `<a href>`.
+Two deliberate differences, both safer: `X-Forwarded-*` is ignored unless `APP_TRUST_PROXY` is true (a client could otherwise spoof `req.protocol`), and `res.redirect()` no longer emits a clickable `<a href>`.
 
-**4. `socket.io` and `mocha` are now optional peer dependencies** — `npm install socket.io`
-if you set `startSocketServer: true`, `mocha` if you use `hearthjs test`. Together
-they were 8.7 MB shipped to every deployment.
+**4. `socket.io` and `mocha` are now optional peer dependencies** — `npm install socket.io` if you set `startSocketServer: true`, `mocha` if you use `hearthjs test`. Together they were 8.7 MB shipped to every deployment.
 
-**5. Translations removed** — `lib/translate.js`, the `t`/`tr` exports, the
-`translate` CLI, `server/lang`, `APP_SERVER_LANG` and the `getLang(req)` hook.
-`api.createResponse` returns `message` verbatim, which is what `tr()` already did
-without lang files.
+**5. Translations removed** — `lib/translate.js`, the `t`/`tr` exports, the `translate` CLI, `server/lang`, `APP_SERVER_LANG` and the `getLang(req)` hook. `api.createResponse` returns `message` verbatim, which is what `tr()` already did without lang files.
 
-**6. Clustering removed** — `APP_NB_CLUSTER`, `--cluster` and the whole
-worker/leader machinery. Run several instances behind your reverse proxy instead,
-which also gives independent restarts. `server.close(signal, cb)` still accepts a
-signal, now ignored.
+**6. Clustering removed** — `APP_NB_CLUSTER`, `--cluster` and the whole worker/leader machinery. Run several instances behind your reverse proxy instead, which also gives independent restarts. `server.close(signal, cb)` still accepts a signal, now ignored.
 
-**7. The extern API is removed** — `hearthjs.useApi(api, prefix)` and its
-`initDatabase` entry point. Use `hearthjs.api.define` in `server/api/**/api.*.js`.
+**7. The extern API is removed** — `hearthjs.useApi(api, prefix)` and its `initDatabase` entry point. Use `hearthjs.api.define` in `server/api/**/api.*.js`.
 
-**8. `moment` and the `assert` package are no longer installed** — neither was
-used. `require('assert')` still resolves to the Node built-in.
+**8. `moment` and the `assert` package are no longer installed** — neither was used. `require('assert')` still resolves to the Node built-in.
 
 **9. `commander` 6.x -> 14.x** — CLI internals only, the commands are unchanged.
 
@@ -65,17 +49,12 @@ used. `require('assert')` still resolves to the Node built-in.
 08-21-2026 13:16:42 ERROR POST /api/render 500 1.20s account=4821 template="invoice.odt"
 ```
 
-Halves the log volume. `req.hearth_uid` and `req.hearth_start` are still set.
-Attach context with `req.hearth_log = {...}`, or once for every route with a
-`getLogContext(req)` export in `server/index.js`. `APP_LOG_REQUEST_START=true`
-restores the "started" line (with the id, to pair them).
+Halves the log volume. `req.hearth_uid` and `req.hearth_start` are still set. Attach context with `req.hearth_log = {...}`, or once for every route with a `getLogContext(req)` export in `server/index.js`. `APP_LOG_REQUEST_START=true` restores the "started" line (with the id, to pair them).
 
-**11. The startup banner reports what is actually running.** It used to print the
-query timeout, the mode, the database and the port. It now answers the questions
-an incident starts with:
+**11. The startup banner reports what is actually running.** It used to print the query timeout, the mode, the database and the port. It now answers the questions an incident starts with:
 
 ```
-hearthjs 5.0.0 · node v22.23.2 · pid 744637 · env PRODUCTION
+hearthjs 5.0.0 · node v26.7.0 · pid 744637 · env PRODUCTION
   listening  0.0.0.0:80
   database   carbone_account_v2@127.0.0.1:5432 · statement timeout 10s
   loaded     14 apis · 132 routes · 3 crons · 2 addons
@@ -84,31 +63,29 @@ hearthjs 5.0.0 · node v22.23.2 · pid 744637 · env PRODUCTION
   ready      412ms
 ```
 
-The version and pid tie a running process to a build, `loaded` catches an API or
-a cron that silently failed to register, and `ready in` catches a startup that is
-slowly getting worse. It also warns about the settings that only hurt once the
-server is already in trouble: logs not reaching journald in production, a
-disabled request timeout, and graceful shutdown turned off.
+The version and pid tie a running process to a build, `loaded` catches an API or a cron that silently failed to register, and `ready in` catches a startup that is slowly getting worse. It also warns about the settings that only hurt once the server is already in trouble: logs not reaching journald in production, a disabled request timeout, and graceful shutdown turned off.
 
-**12. Logs can go to stdout (`APP_LOG_STDOUT`)** — in production hearthjs wrote
-nothing to stdout, so `journalctl` showed no application logs at all. Off by
-default; colours are dropped when the output is not a terminal.
+**12. Logs can go to stdout (`APP_LOG_STDOUT`)** — in production hearthjs wrote nothing to stdout, so `journalctl` showed no application logs at all. Off by default; colours are dropped when the output is not a terminal.
 
-**13. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and
-leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks
-draining answers `Connection: close`, closes idle keep-alive sockets, lets running
-requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms,
-`0` waits forever) caps it; a second signal exits immediately;
-`APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
+**13. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks draining answers `Connection: close`, closes idle keep-alive sockets, lets running requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms, `0` waits forever) caps it; a second signal exits immediately; `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
 
-**14. Request timeout is 60 s** instead of node's 300 s default
-(`APP_REQUEST_TIMEOUT`, `0` restores it).
+**14. Request timeout is 60 s** instead of node's 300 s default (`APP_REQUEST_TIMEOUT`, `0` restores it).
+
+**15. Four unused exports removed.** None were called by hearthjs itself:
+
+| removed | was |
+|---------|-----|
+| `api.matchRoute()` | the old route matcher, superseded by the restana router |
+| `cron.getAction(name)` | returned a cron's function; read `_cronList[name].action` |
+| `helper.assertTableOfObject()` | an order-insensitive array assertion for test suites |
+| `helper.handlePromiseError()` | wrapped a promise into a `[err, data]` tuple |
 
 #### 🔥 Performance
 
-`converter.sqlToJson` was **quadratic** in the number of rows: finding the entity
-already built for a primary key rescanned the whole array for every row. It is now
-indexed, and linear. This is what made large exports time out.
+**SQL templates were quadratic in the number of rendered rows.** A template looping over a data array rebuilt its parameter accumulator with `concat` on every iteration, so building the `$1..$N` list cost O(n²). 100 000 items took
+**9.0 s**, on its own more than a request timeout. Appending in place makes it linear: **533 ms**, 17x faster.
+
+`converter.sqlToJson` was **quadratic** in the number of rows: finding the entity already built for a primary key rescanned the whole array for every row. It is now indexed, and linear. This is what made large exports time out.
 
 | rows    | before    | after  | speed-up |
 |---------|-----------|--------|----------|
@@ -116,107 +93,57 @@ indexed, and linear. This is what made large exports time out.
 | 64 000  | 18 801 ms | 208 ms | 91x      |
 | 128 000 | 76 050 ms | 390 ms | **195x** |
 
-- SQL files are no longer re-read and re-tokenized on every query: the parsed
-  template is cached against the file mtime. **~40% faster** rendering.
+- SQL files are no longer re-read and re-tokenized on every query: the parsed template is cached against the file mtime. **~40% faster** rendering.
 - `converter.parseModel` no longer deep-clones through `JSON.parse(JSON.stringify())`: **~59% faster**.
 - `validation` no longer rebuilds its rule tables and recompiles its regexes per field: **~21% faster**.
-- Addons are resolved once per route at registration; routes without addons no
-  longer pay for the middleware at all.
+- Addons are resolved once per route at registration; routes without addons no longer pay for the middleware at all.
 - restana instead of express: **+6.0% throughput**, the compatibility layer costing 1.5 us per request.
 - A production install goes from **48.5 MB / 380 packages to 9.0 MB / 78 packages**.
 
 #### 🔒 Security
 
+- **A declaration that leaves an endpoint missing is now logged at `error`.** A duplicate API name, a duplicate route, a route declared without a schema and a schema that cannot be found all warned quietly while the endpoint silently did not exist. They are startup only, so there is no risk of flooding the log. A second, unreachable duplicate route check was removed at the same time.
+- **A refused request no longer leaks internals, and no longer looks like a fault.** Handlers refuse with `next('a message')` and report a fault with `next(new Error(...))`. Both were logged at `error` and both had their text returned verbatim, so deliberate 400s ("Wrong password", "Only an administrator can...") buried the real failures in the log, and an `Error` reaching a `before` or `after` handler sent its table names and file paths to the client. A string is now logged at `warn` and still passes through; an `Error` stays at `error` and, in production, answers `An error occured` unless marked `err.expose = true` — the same rule `_handleError` already applied, which these two paths bypassed by answering directly.
+
 **0 known vulnerabilities**, down from **54** (6 critical, 30 high).
 
-- **ReDoS in the `url` validator.** `http://` + 120 characters + `!` kept the event
-  loop busy **196 seconds** — one unauthenticated request froze a server. Now
-  parsed with `URL`: **0.02 ms**. Private ranges are still refused.
-- **Code injection in `api._addRoute`.** The per-route middleware was built by
-  concatenating names into a string passed to `new Function()`. It is a closure now.
-- **Error messages leaked internals** — table names and absolute paths were
-  returned verbatim. Production now answers `An error occured` and logs the detail.
-  `next('a string')` and `err.expose = true` still pass through.
-- **Names colliding with `Object.prototype`.** A column named `constructor` broke
-  the row mapper and `db.exec('toString')` killed the process. The lookup objects
-  have a null prototype now.
-- **A header holding a newline** threw `ERR_INVALID_CHAR` from a callback. Dropped
-  and logged instead. Nothing was injectable either way.
-- **`SET statement_timeout` and `TRUNCATE` built as strings** — the timeout is
-  forced to an integer, and `datasets.clean()` doubles quotes in table names.
-- `APP_SECURITY_HEADERS=true` adds `nosniff`, `X-Frame-Options` and HSTS. Off by
-  default, since an application's own headers must win.
+- **ReDoS in the `url` validator.** `http://` + 120 characters + `!` kept the event loop busy **196 seconds** — one unauthenticated request froze a server. Now parsed with `URL`: **0.02 ms**. Private ranges are still refused.
+- **Code injection in `api._addRoute`.** The per-route middleware was built by concatenating names into a string passed to `new Function()`. It is a closure now.
+- **Error messages leaked internals** — table names and absolute paths were returned verbatim. Production now answers `An error occured` and logs the detail. `next('a string')` and `err.expose = true` still pass through.
+- **Names colliding with `Object.prototype`.** A column named `constructor` broke the row mapper and `db.exec('toString')` killed the process. The lookup objects have a null prototype now.
+- **A header holding a newline** threw `ERR_INVALID_CHAR` from a callback. Dropped and logged instead. Nothing was injectable either way.
+- **`SET statement_timeout` and `TRUNCATE` built as strings** — the timeout is forced to an integer, and `datasets.clean()` doubles quotes in table names.
+- `APP_SECURITY_HEADERS=true` adds `nosniff`, `X-Frame-Options` and HSTS. Off by default, since an application's own headers must win.
 
-Injection, denial of service, disclosure, traversal, pollution, smuggling and path
-confusion were each tried against the framework over three rounds. Verified as not
-vulnerable: SQL templating binds `{{ }}` as parameters, prototype pollution is
-stripped from both query string and body, `sendFile` refuses `../`, the other
-validators do not backtrack, cookies serialize byte for byte like express, `qs`
-caps the query string at 1000 parameters, slowloris does not delay a legitimate
-request, `Content-Length` + `Transfer-Encoding` is rejected with a `400`, and every
-path variant tried routes exactly as express does.
+Injection, denial of service, disclosure, traversal, pollution, smuggling and path confusion were each tried against the framework over three rounds. Verified as not vulnerable: SQL templating binds `{{ }}` as parameters, prototype pollution is stripped from both query string and body, `sendFile` refuses `../`, the other validators do not backtrack, cookies serialize byte for byte like express, `qs` caps the query string at 1000 parameters, slowloris does not delay a legitimate request, `Content-Length` + `Transfer-Encoding` is rejected with a `400`, and every path variant tried routes exactly as express does.
 
 #### 💥 Crash vectors
 
-Nineteen common Node failure modes were reproduced against the framework. Seven
-took the whole process down; all seven report instead. `test/crashSafety.js` keeps
-them from coming back.
+- **A typo in a schema name hung the server at startup, forever.** A route naming a schema that does not exist was counted in `_nbRouteDeclared` and then returned early, so it was never served and `_nbRouteServed` could never catch up. Startup polls that pair to decide the API is ready, so `run()` simply never called back, with a single `warn` to show for it. The schema is now looked up before the route is counted, and readiness is re-evaluated on every declaration failure.
+
+Nineteen common Node failure modes were reproduced against the framework. Seven took the whole process down; all seven report instead. `test/crashSafety.js` keeps them from coming back.
 
 - **Answering twice** threw `ERR_HTTP_HEADERS_SENT` where nothing caught it.
-- **An unserializable body** (circular, `BigInt`) threw from `res.json()`, normally
-  called inside a database callback. Answers `500` now.
-- **`EADDRINUSE`** is reported through an event, so a restart before the old process
-  released the port was a silent crash loop. It reaches the `run()` callback now.
-- **A project file that does not parse** (cron, `api.*.js`, `index.js`) threw from a
-  callback; it is a startup error naming the file now.
+- **An unserializable body** (circular, `BigInt`) threw from `res.json()`, normally called inside a database callback. Answers `500` now.
+- **`EADDRINUSE`** is reported through an event, so a restart before the old process released the port was a silent crash loop. It reaches the `run()` callback now.
+- **A project file that does not parse** (cron, `api.*.js`, `index.js`) threw from a callback; it is a startup error naming the file now.
 - **A migration without a stored down script** read `rows[0].down` on an empty result.
-- **Logging before the server started** threw, and the day-rollover branch could
-  recurse into itself.
-- **Async `before`/`after` handlers and addon hooks** produced unhandled rejections,
-  which **terminate the process on Node >= 15**. They answer an error now, and a
-  handler rejecting after `next()` cannot answer twice.
+- **Logging before the server started** threw, and the day-rollover branch could recurse into itself.
+- **Async `before`/`after` handlers and addon hooks** produced unhandled rejections, which **terminate the process on Node >= 15**. They answer an error now, and a handler rejecting after `next()` cannot answer twice.
 
 #### 🐛 Fixes
 
-- **`hearthjs test -s` no longer watches the project.** The runner started the file
-  watcher unconditionally, and its callback reloads the server in process:
-  `server.close()` wipes the SQL registry, so a poll landing mid-suite failed
-  whatever test was in flight with `Unknow SQL file`. `-s` runs the suite once and
-  exits, so there is nothing to watch for. Reproduced deterministically by touching
-  a watched `.sql` file mid-run: 2 tests failed before, 40 pass after.
-- The watcher compares `stat.mtimeMs` rounded to the millisecond rather than
-  building a `Date` on every poll of every watched file. Same granularity, no
-  allocation.
+- **`hearthjs test -s` no longer watches the project.** The runner started the file watcher unconditionally, and its callback reloads the server in process: `server.close()` wipes the SQL registry, so a poll landing mid-suite failed whatever test was in flight with `Unknow SQL file`. `-s` runs the suite once and exits, so there is nothing to watch for. Reproduced deterministically by touching a watched `.sql` file mid-run: 2 tests failed before, 40 pass after.
+- The watcher compares `stat.mtimeMs` rounded to the millisecond rather than building a `Date` on every poll of every watched file. Same granularity, no allocation.
 
-- **Route params are decoded again.** express ran every captured param through
-  `decodeURIComponent`; the new router does not, so `/client/https%3A%2F%2F...`
-  reached the handler still encoded. Parity is restored, and it follows express
-  exactly: only `req.params` is decoded, never `req.url`, `req.path` or the query
-  string. Routing still matches the raw path, which is what keeps an encoded `%2F`
-  inside a single `:param` segment instead of splitting it. A malformed escape
-  (`%foobar`, `100%`) answers **400** rather than passing the raw value through,
-  and decoding happens exactly once, so a double encoded `%252e%252e%252f` stays
-  inert instead of becoming `../`. Costs 22 ns per request when no value holds an
-  escape.
+- **Route params are decoded again.** express ran every captured param through `decodeURIComponent`; the new router does not, so `/client/https%3A%2F%2F...` reached the handler still encoded. Parity is restored, and it follows express exactly: only `req.params` is decoded, never `req.url`, `req.path` or the query string. Routing still matches the raw path, which is what keeps an encoded `%2F` inside a single `:param` segment instead of splitting it. A malformed escape (`%foobar`, `100%`) answers **400** rather than passing the raw value through, and decoding happens exactly once, so a double encoded `%252e%252e%252f` stays inert instead of becoming `../`. Costs 22 ns per request when no value holds an escape.
 
-  If you worked around this in application code, **remove the workaround**:
-  decoding a value twice is exactly the bypass the single decode is there to
-  prevent.
+If you worked around this in application code, **remove the workaround**: decoding a value twice is exactly the bypass the single decode is there to prevent.
 
-- `helper.genericQueue` threw `Maximum call stack size exceeded` when the handler
-  called `next()` synchronously, crashing at about 4 400 items. 200 000 items now
-  run in a few milliseconds. It also no longer empties the array it is given.
-- A comparison rule reads a string by length but a number by value, and the
-  operator alone cannot tell them apart — so `['<', 50]` rejected the 3-character
-  string `'123'`. A `type` rule now decides:
-  `['type', 'string', '<', 50]` always means length. Without one the previous guess
-  is kept, so `['>=', 18]` on the string `'42'` still means the value.
-  New types: `string`, `number`, `integer`, `boolean`.
-- A condition nested inside a loop in a SQL template is rendered on every
-  iteration. It was emptied after the first turn, and only worked because the token
-  tree was deep-cloned each time.
-- The logged request duration ignored the seconds part of `process.hrtime`, so a
-  2.5 s request was reported as `500ms`.
+- `helper.genericQueue` threw `Maximum call stack size exceeded` when the handler called `next()` synchronously, crashing at about 4 400 items. 200 000 items now run in a few milliseconds. It also no longer empties the array it is given.
+- A comparison rule reads a string by length but a number by value, and the operator alone cannot tell them apart — so `['<', 50]` rejected the 3-character string `'123'`. A `type` rule now decides: `['type', 'string', '<', 50]` always means length. Without one the previous guess is kept, so `['>=', 18]` on the string `'42'` still means the value. New types: `string`, `number`, `integer`, `boolean`.
+- A condition nested inside a loop in a SQL template is rendered on every iteration. It was emptied after the first turn, and only worked because the token tree was deep-cloned each time.
+- The logged request duration ignored the seconds part of `process.hrtime`, so a 2.5 s request was reported as `500ms`.
 - `mustache._readAllIncludes` was dead code with an inverted "file not found" check.
 - The `fs.F_OK` deprecation warning printed on every start is gone.
 
@@ -237,40 +164,26 @@ them from coming back.
 | mocha           | 6.0.2    | *optional peer dependency* |
 | moment          | 2.24.0   | *removed (unused)* |
 
-Dev: `eslint` 5 -> 9 (+ `neostandard`), `sinon` 7 -> 22, `nyc` 14 -> 18, `multer`
-1.4.4 -> 2.2.0, `mockdate` 2 -> 3. The abandoned `suppose` package (2015, two high
-severity advisories) was replaced by `test/helpers/suppose.js`.
+Dev: `eslint` 5 -> 9 (+ `neostandard`), `sinon` 7 -> 22, `nyc` 14 -> 18, `multer` 1.4.4 -> 2.2.0, `mockdate` 2 -> 3. The abandoned `suppose` package (2015, two high severity advisories) was replaced by `test/helpers/suppose.js`.
 
-**Deliberately held back**, so `npm outdated` does not read as neglect. All are on
-patched versions and `npm audit` reports nothing.
+**Deliberately held back**, so `npm outdated` does not read as neglect. All are on patched versions and `npm audit` reports nothing.
 
 | package | held at | why |
 |---------|---------|-----|
-| `body-parser`, `serve-static`, `send`, `cookie`, `type-is`, `mime-types` | express 4 line | These are the versions express 4 ships, which is the parity the compatibility layer promises. `cookie` 2 needs **Node >= 22** and renames its whole API; `send` 1 answers `charset=UTF-8` where express answers `utf-8`. |
-| `commander` | 14 | 15 requires **Node >= 22.12**, dropping Node 20. |
-| `nanoid` | 3 | 4 and later are ESM only, so `require()` breaks on Node 20. |
+| `body-parser`, `serve-static`, `send`, `cookie`, `type-is`, `mime-types` | express 4 line | These are the versions express 4 ships, which is the parity the compatibility layer promises. `cookie` 2 renames its whole API, and `send` 1 answers `charset=UTF-8` where express answers `utf-8`. Node 26 lifts the engine constraint that also held `cookie` back, so only the parity argument remains. |
 | `eslint` | 9 | 10 is only supported by a `neostandard` prerelease. |
 | `express` (dev) | 4 | It is the reference the differential tests compare against. |
+| `commander` | 14 | Held back when Node 20 was supported. `>=26` removes that blocker, so 15 is now upgradable. |
+| `nanoid` | 3 | 4 and later are ESM only. Node 26 can `require()` an ESM module, so 4 and later are now upgradable. |
 
 #### ✅ Tests & tooling
 
-- **545 tests** (was 431), green on Node 20, 22, 24 and 26. Full run **38s -> 12s**.
-- New suites: `expressCompat` (25 differential tests running the same handler on
-  express and on restana), `gracefulShutdown`, `crashSafety`, `security`,
-  `asyncSafety`, `performance` (guards the complexity of `sqlToJson`), plus
-  `watch` and `socket`, which had no tests at all.
-- The suite waits on conditions and events instead of sleeping, and stops test
-  servers through the child process handle rather than `process.kill(pid)` — a
-  recycled pid is how a run managed to terminate `npm` itself.
-- `eslint.config.js` added: the project had ESLint dependencies but no committed
-  configuration, so linting never ran.
-- `.github/workflows/ci.yml` added: the suite on Node 20/22/24/26 against
-  PostgreSQL 16, plus lint and `npm audit`. Actions pinned by commit SHA.
-- `.mocharc.yml` added, with a 30 s timeout. The project had no mocha
-  configuration, so every suite that talks to PostgreSQL was bounded by mocha's
-  **2 s default** — fine locally, but a loaded CI runner blew through it and the
-  timed out test's callbacks then ran on tables its own `after` hook had already
-  dropped. Individual tests still raise it where they need to.
+- **554 tests** (was 431), green on Node 26. Full run **38s -> 12s**.
+- New suites: `expressCompat` (25 differential tests running the same handler on express and on restana), `gracefulShutdown`, `crashSafety`, `security`, `asyncSafety`, `performance` (guards the complexity of `sqlToJson`), plus `watch` and `socket`, which had no tests at all.
+- The suite waits on conditions and events instead of sleeping, and stops test servers through the child process handle rather than `process.kill(pid)` — a recycled pid is how a run managed to terminate `npm` itself.
+- `eslint.config.js` added: the project had ESLint dependencies but no committed configuration, so linting never ran.
+- `.github/workflows/ci.yml` added: the suite on Node 26 against PostgreSQL 16, plus lint and `npm audit`. Actions pinned by commit SHA.
+- `.mocharc.yml` added, with a 30 s timeout. The project had no mocha configuration, so every suite that talks to PostgreSQL was bounded by mocha's **2 s default** — fine locally, but a loaded CI runner blew through it and the timed out test's callbacks then ran on tables its own `after` hook had already dropped. Individual tests still raise it where they need to.
 
 
 ### v4.0.0

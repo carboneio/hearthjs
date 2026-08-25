@@ -1,11 +1,18 @@
 {
   "name": "hearthjs",
   "version": "5.0.0",
-  "description": "A NodeJS server framework to build fast Rest API",
+  "description": "A NodeJS server framework to build fast and secured Rest API",
   "main": "lib/index.js",
+  "files": [
+    "lib",
+    "bin",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "bin": "bin/hearthjs",
   "engines": {
-    "node": ">=20"
+    "node": ">=26"
   },
   "scripts": {
     "lint": "eslint lib test eslint.config.js",
@@ -15,9 +22,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git@gitlab.fdc.ovh:devDobby/hearthjs.git"
+    "url": "git+https://github.com/carboneio/hearthjs.git"
   },
-  "author": "Maxime Magné",
+  "author": "carboneio",
   "license": "ISC",
   "dependencies": {
     "accepts": "=1.3.8",

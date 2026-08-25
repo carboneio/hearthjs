@@ -128,7 +128,7 @@ describe('Cron', () => {
     }).timeout(20000)
   })
 
-  describe('Function add, start, stop and getAction', () => {
+  describe('Function add, start and stop', () => {
     const filePath = path.join(__dirname, 'cronFile')
 
     afterEach(() => {
@@ -173,12 +173,6 @@ describe('Cron', () => {
       }, Error, 'Unknow cron myCron')
     })
 
-    it('should throw an error if getAction is called for an unknown cron', () => {
-      assert.throws(() => {
-        cron.getAction('myCron')
-      }, Error, 'Unknow cron myCron')
-    })
-
     it('should add a cron start and stop it', () => {
       cron.add('myCron', '* * * * *', () => {})
       cron.start('myCron')
@@ -188,16 +182,6 @@ describe('Cron', () => {
       assert.strictEqual(cron._cronList['myCron'].cron.getStatus(), 'stopped')
     })
 
-    it('should return the action and we could execute it', () => {
-      cron.add('myCron', '* * * * *', () => {
-        fs.writeFileSync(filePath, 'Yoo')
-      }, { start: true })
-      assert.notStrictEqual(cron._cronList['myCron'], undefined)
-      let func = cron.getAction('myCron')
-      func()
-      let content = fs.readFileSync(filePath, 'utf8')
-      assert.strictEqual(content, 'Yoo')
-    })
   })
 })
 

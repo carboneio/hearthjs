@@ -16,7 +16,7 @@ jobs:
       # hide the state of the others
       fail-fast: false
       matrix:
-        node: ['24', '26']
+        node: ['26']
 
     services:
       postgres:
