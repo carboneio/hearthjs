@@ -76,11 +76,27 @@ The version and pid tie a running process to a build, `loaded` catches an API or
 
 Set it in the environment or in the project config file. Colours are dropped when stdout is not a terminal.
 
-**13. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks draining answers `Connection: close`, closes idle keep-alive sockets, lets running requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms, `0` waits forever) caps it; a second signal exits immediately; `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
+**13. Under systemd, stdout carries real journald priorities.** The line used to repeat what the journal already records, and hid its level inside the text:
 
-**14. Request timeout is 60 s** instead of node's 300 s default (`APP_REQUEST_TIMEOUT`, `0` restores it).
+```
+Aug 26 10:49:37 host node[1049837]: 08-26-2026 10:49:37 INFO GET /api/plans 200 321ms
+```
 
-**15. Four unused exports removed.** None were called by hearthjs itself:
+The date was there twice, and since the level was plain text every entry landed at journald's default priority: `journalctl -p err -u <service>` returned nothing even when the application logged `ERROR`. hearthjs now emits the syslog prefix systemd parses and strips (`error` `<3>`, `warn` `<4>`, `info` `<6>`, `debug` `<7>`):
+
+```
+Aug 26 10:49:37 carbone-account[1049837]: GET /api/plans 200 321ms
+```
+
+⚠️ **This changes the production log format on stdout.** Anything grepping the journal for `INFO`/`WARN`/`ERROR` must switch to `journalctl -p err`, `-p warning`, and so on: the level is metadata now, not text. **The log file format is unchanged**, timestamp and level included.
+
+It applies only when `JOURNAL_STREAM` is set, which systemd does exactly when it collects the service's stdout. A terminal still gets the colours and the date, and any other collector (docker's `json-file` driver, a pipe) still gets today's line: those do not parse `<N>` and would print it as literal text.
+
+**14. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks draining answers `Connection: close`, closes idle keep-alive sockets, lets running requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms, `0` waits forever) caps it; a second signal exits immediately; `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
+
+**15. Request timeout is 60 s** instead of node's 300 s default (`APP_REQUEST_TIMEOUT`, `0` restores it).
+
+**16. Four unused exports removed.** None were called by hearthjs itself:
 
 | removed | was |
 |---------|-----|

@@ -520,6 +520,149 @@ describe('Logger', () => {
     })
   })
 
+  describe('Journald priorities (JOURNAL_STREAM)', () => {
+    const _serverPath = path.join(os.tmpdir(), 'hearthjs-journald-test')
+    const _logFilePath = path.join(_serverPath, 'logs', '08-01-2019.log')
+
+    let _logSpy = null
+    let _errorSpy = null
+    let _realServerPath = null
+    let _realJournal = null
+    let _realTTY = null
+
+    before(() => {
+      mockdate.set(new Date('08/01/2019'))
+      _realServerPath = process.env.HEARTH_SERVER_PATH
+      _realJournal = process.env.JOURNAL_STREAM
+      _realTTY = process.stdout.isTTY
+      _logSpy = sinon.spy(console, 'log')
+      _errorSpy = sinon.spy(console, 'error')
+    })
+
+    after(() => {
+      mockdate.reset()
+      console.log.restore()
+      console.error.restore()
+      process.env.HEARTH_SERVER_PATH = _realServerPath
+      process.stdout.isTTY = _realTTY
+
+      if (_realJournal === undefined) {
+        delete process.env.JOURNAL_STREAM
+      } else {
+        process.env.JOURNAL_STREAM = _realJournal
+      }
+
+      logger._resetLogOutputSetting()
+    })
+
+    beforeEach(() => {
+      process.env.HEARTH_SERVER_PATH = _serverPath
+      fs.rmSync(_serverPath, { recursive: true, force: true })
+      fs.mkdirSync(_serverPath, { recursive: true })
+      process.env.APP_LOG_OUTPUT = 'both'
+      // What systemd sets when it is the one collecting stdout
+      process.env.JOURNAL_STREAM = '8:2035359'
+      process.stdout.isTTY = false
+      _logSpy.resetHistory()
+      _errorSpy.resetHistory()
+    })
+
+    afterEach((done) => {
+      delete process.env.APP_LOG_OUTPUT
+      delete process.env.JOURNAL_STREAM
+
+      logger._stop(() => {
+        fs.rmSync(_serverPath, { recursive: true, force: true })
+        done()
+      })
+    })
+
+    it('should prefix each level with its syslog priority, and nothing else', (done) => {
+      logger.initLogger('prod')
+      logger.log('GET /api/plans 200 321ms', 'info')
+      logger.log('POST /api/webhooks 400 12ms', 'warn')
+      logger.log('POST /api/render 500 1.20s', 'error')
+      logger.log('a detail', 'debug')
+      logger.log('a level nobody declared', 'trace')
+      logger.log('a level named like a property', 'constructor')
+
+      // The date and the level word are journald's own metadata now
+      assert.strictEqual(_logSpy.args[0][0], '<6>GET /api/plans 200 321ms')
+      assert.strictEqual(_logSpy.args[1][0], '<4>POST /api/webhooks 400 12ms')
+      assert.strictEqual(_errorSpy.args[0][0], '<3>POST /api/render 500 1.20s')
+      assert.strictEqual(_logSpy.args[2][0], '<7>a detail')
+      assert.strictEqual(_logSpy.args[3][0], '<6>a level nobody declared')
+      assert.strictEqual(_logSpy.args[4][0], '<6>a level named like a property')
+
+      logger._stop(done)
+    })
+
+    it('should send errors to stderr, and everything else to stdout', (done) => {
+      logger.initLogger('prod')
+      logger.log('an error', 'error')
+
+      assert.strictEqual(_errorSpy.callCount, 1)
+      assert.strictEqual(_logSpy.called, false)
+
+      logger._stop(done)
+    })
+
+    it('should write no prefix when JOURNAL_STREAM is unset', (done) => {
+      delete process.env.JOURNAL_STREAM
+      logger.initLogger('prod')
+      logger.log('collected by docker', 'error')
+
+      // A driver that does not parse <N> would store it as literal text
+      assert.strictEqual(_errorSpy.args[0][0], '08-01-2019 00:00:00 ERROR collected by docker')
+
+      logger._stop(done)
+    })
+
+    it('should keep the log file line identical, with or without journald', (done) => {
+      logger.initLogger('prod')
+      logger.log('the file never changed', 'error')
+
+      logger._stop(() => {
+        const _underJournald = fs.readFileSync(_logFilePath, 'utf8')
+
+        fs.unlinkSync(_logFilePath)
+        delete process.env.JOURNAL_STREAM
+        logger.initLogger('prod')
+        logger.log('the file never changed', 'error')
+
+        logger._stop(() => {
+          assert.strictEqual(_underJournald, '08-01-2019 00:00:00 ERROR the file never changed\n')
+          assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8'), _underJournald)
+          done()
+        })
+      })
+    })
+
+    it('should still honour logDate false under journald', (done) => {
+      logger.initLogger('prod')
+      logger.log('  listening  0.0.0.0:80', 'warn', { logDate: false })
+
+      assert.strictEqual(_logSpy.args[0][0], '<4>  listening  0.0.0.0:80')
+
+      logger._stop(() => {
+        assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8'), '  listening  0.0.0.0:80\n')
+        done()
+      })
+    })
+
+    it('should keep the colours and the date on a terminal', (done) => {
+      delete process.env.JOURNAL_STREAM
+      process.stdout.isTTY = true
+      logger.initLogger('prod')
+      logger.log('read by a human', 'info')
+
+      assert.strictEqual(_logSpy.args[0][0].includes('\u001b['), true, _logSpy.args[0][0])
+      assert.strictEqual(_logSpy.args[0][0].includes('08-01-2019 00:00:00'), true, _logSpy.args[0][0])
+
+      logger._stop(done)
+    })
+  })
+
   describe('Prod mode', () => {
     const _logFilePath = path.join(__dirname, 'datasets', 'myApp', 'server', 'logs', '08-01-2019.log')
 

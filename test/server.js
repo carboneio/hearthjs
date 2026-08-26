@@ -276,6 +276,25 @@ describe('Server', () => {
       assert.strictEqual(_withoutFile.includes('output stdout'), true, _withoutFile)
     })
 
+    it('should say when the journal is the one collecting the logs', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realOutput = logger._getLogOutput
+      const _realJournald = logger._isUnderJournald
+
+      logger.log = (msg) => _lines.push(String(msg))
+      logger._getLogOutput = () => 'stdout'
+      logger._isUnderJournald = () => true
+      app.server._logStartup('prod')
+      logger.log = _realLog
+      logger._getLogOutput = _realOutput
+      logger._isUnderJournald = _realJournald
+
+      const _logs = _lines.find((l) => l.includes('logs'))
+
+      assert.strictEqual(_logs.includes('output stdout · journald priorities'), true, _logs)
+    })
+
     it('should warn about the settings that only hurt once in trouble', () => {
       const _lines = []
       const _realLog = logger.log
@@ -294,6 +313,28 @@ describe('Server', () => {
       assert.strictEqual(_lines.every((l) => l.startsWith('warn')), true, _lines.join('\n'))
       assert.strictEqual(_lines.join('\n').includes('journalctl'), true, _lines.join('\n'))
       assert.strictEqual(_lines.join('\n').includes('APP_LOG_OUTPUT'), true, _lines.join('\n'))
+    })
+
+    it('should say what the journal gains when it is the one collecting', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realOutput = logger._getLogOutput
+      const _realJournald = logger._isUnderJournald
+      const _realConfig = app.server.config
+
+      logger.log = (msg, level) => _lines.push(`${level} ${msg}`)
+      logger._getLogOutput = () => 'file'
+      logger._isUnderJournald = () => true
+      app.server.config = { APP_REQUEST_TIMEOUT: 0, APP_GRACEFUL_SHUTDOWN: false }
+      app.server._logStartupWarnings('prod')
+      logger.log = _realLog
+      logger._getLogOutput = _realOutput
+      logger._isUnderJournald = _realJournald
+      app.server.config = _realConfig
+
+      const _journalctl = _lines.find((l) => l.includes('journalctl'))
+
+      assert.strictEqual(_journalctl.includes('own priority'), true, _journalctl)
     })
 
     it('should not mention journalctl when the logs already reach stdout', () => {
