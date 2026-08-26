@@ -579,7 +579,7 @@ describe('Logger', () => {
 
     it('should prefix each level with its syslog priority, and nothing else', (done) => {
       logger.initLogger('prod')
-      logger.log('GET /api/plans 200 321ms', 'info')
+      logger.log('GET /api/users 200 321ms', 'info')
       logger.log('POST /api/webhooks 400 12ms', 'warn')
       logger.log('POST /api/render 500 1.20s', 'error')
       logger.log('a detail', 'debug')
@@ -587,7 +587,7 @@ describe('Logger', () => {
       logger.log('a level named like a property', 'constructor')
 
       // The date and the level word are journald's own metadata now
-      assert.strictEqual(_logSpy.args[0][0], '<6>GET /api/plans 200 321ms')
+      assert.strictEqual(_logSpy.args[0][0], '<6>GET /api/users 200 321ms')
       assert.strictEqual(_logSpy.args[1][0], '<4>POST /api/webhooks 400 12ms')
       assert.strictEqual(_errorSpy.args[0][0], '<3>POST /api/render 500 1.20s')
       assert.strictEqual(_logSpy.args[2][0], '<7>a detail')

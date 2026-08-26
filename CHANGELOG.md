@@ -56,7 +56,7 @@ Halves the log volume. `req.hearth_uid` and `req.hearth_start` are still set. At
 ```
 hearthjs 5.0.0 · node v26.7.0 · pid 744637 · env PRODUCTION
   listening  0.0.0.0:80
-  database   carbone_account_v2@127.0.0.1:5432 · statement timeout 10s
+  database   myapp@127.0.0.1:5432 · statement timeout 10s
   loaded     14 apis · 132 routes · 3 crons · 2 addons
   timeouts   request 60s · shutdown 10s
   logs       /srv/app/server/logs/08-23-2026.log · output both
@@ -65,7 +65,7 @@ hearthjs 5.0.0 · node v26.7.0 · pid 744637 · env PRODUCTION
 
 The version and pid tie a running process to a build, `loaded` catches an API or a cron that silently failed to register, and `ready in` catches a startup that is slowly getting worse. It also warns about the settings that only hurt once the server is already in trouble: logs not reaching journald in production, a disabled request timeout, and graceful shutdown turned off.
 
-**12. One setting for the log destinations (`APP_LOG_OUTPUT`)** — in production hearthjs wrote nothing to stdout, so `journalctl` showed no application logs at all, and the file could not be turned off at all, which a read only container filesystem cannot accept.
+**12. One setting for the log destinations (`APP_LOG_OUTPUT`)** — in production hearthjs wrote nothing to stdout, so `journalctl` showed no application logs, and there was no way to turn the file off, which a container with a read only filesystem needs.
 
 | `APP_LOG_OUTPUT` | logs go to |
 |------------------|------------|
@@ -76,21 +76,21 @@ The version and pid tie a running process to a build, `loaded` catches an API or
 
 Set it in the environment or in the project config file. Colours are dropped when stdout is not a terminal.
 
-**13. Under systemd, stdout carries real journald priorities.** The line used to repeat what the journal already records, and hid its level inside the text:
+**13. Under systemd, stdout carries journald priorities.** A line used to look like this:
 
 ```
-Aug 26 10:49:37 host node[1049837]: 08-26-2026 10:49:37 INFO GET /api/plans 200 321ms
+Aug 26 10:49:37 host node[1049837]: 08-26-2026 10:49:37 INFO GET /api/users 200 321ms
 ```
 
-The date was there twice, and since the level was plain text every entry landed at journald's default priority: `journalctl -p err -u <service>` returned nothing even when the application logged `ERROR`. hearthjs now emits the syslog prefix systemd parses and strips (`error` `<3>`, `warn` `<4>`, `info` `<6>`, `debug` `<7>`):
+The date is printed twice, and the level is plain text, so journald filed every entry at its default priority and `journalctl -p err -u <service>` returned nothing even when the application logged `ERROR`. hearthjs now writes the syslog prefix systemd parses and strips (`error` `<3>`, `warn` `<4>`, `info` `<6>`, `debug` `<7>`):
 
 ```
-Aug 26 10:49:37 carbone-account[1049837]: GET /api/plans 200 321ms
+Aug 26 10:49:37 myapp[1049837]: GET /api/users 200 321ms
 ```
 
-⚠️ **This changes the production log format on stdout.** Anything grepping the journal for `INFO`/`WARN`/`ERROR` must switch to `journalctl -p err`, `-p warning`, and so on: the level is metadata now, not text. **The log file format is unchanged**, timestamp and level included.
+This changes the log format on stdout in production. Anything grepping the journal for `INFO` or `ERROR` must use `journalctl -p err`, `-p warning`, and so on. The log file is unchanged, timestamp and level included.
 
-It applies only when `JOURNAL_STREAM` is set, which systemd does exactly when it collects the service's stdout. A terminal still gets the colours and the date, and any other collector (docker's `json-file` driver, a pipe) still gets today's line: those do not parse `<N>` and would print it as literal text.
+It applies only when `JOURNAL_STREAM` is set, which systemd does when it collects the service output. A terminal keeps the colours and the date, and docker or a pipe keeps the previous line, since neither parses `<N>` and both would print it as text.
 
 **14. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks draining answers `Connection: close`, closes idle keep-alive sockets, lets running requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms, `0` waits forever) caps it; a second signal exits immediately; `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
 
