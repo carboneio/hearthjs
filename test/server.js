@@ -1,4 +1,5 @@
 const app = require('../lib/')
+const http = require('http')
 const assert = require('assert')
 const path = require('path')
 const rock = require('rock-req')
@@ -270,6 +271,97 @@ describe('Server', () => {
       assert.strictEqual(_lines.length, 3, _lines.join('\n'))
       assert.strictEqual(_lines.every((l) => l.startsWith('warn')), true, _lines.join('\n'))
       assert.strictEqual(_lines.join('\n').includes('journalctl'), true, _lines.join('\n'))
+    })
+
+    describe('_statusForError', () => {
+      it('should use err.code, the hearthjs convention, for any status node accepts', () => {
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 403 })), 403)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 302 })), 302)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 200 })), 200)
+      })
+
+      it('should prefer err.code over the express fields', () => {
+        const _err = Object.assign(new Error('x'), { code: 403, status: 500, statusCode: 500 })
+
+        assert.strictEqual(app.server._statusForError(_err), 403)
+      })
+
+      it('should read err.status and err.statusCode, which express middlewares set', () => {
+        // body-parser rejecting an oversized body carries both
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: 413, statusCode: 413 })), 413)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: 403 })), 403)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { statusCode: 429 })), 429)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: 400 })), 400)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: 599 })), 599)
+      })
+
+      it('should ignore a status outside the error range, like express does', () => {
+        for (const _status of [200, 302, 399, 600, 1000]) {
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 400, String(_status))
+        }
+      })
+
+      it('should ignore a status node would refuse, which would throw from res.end', () => {
+        // res.end() raises ERR_HTTP_INVALID_STATUS_CODE below 100, above 999 or
+        // on a non integer, from a place where nothing catches it
+        for (const _status of [0, -1, 1.5, 99, 1000, NaN, Infinity]) {
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 400, String(_status))
+        }
+
+        for (const _code of [0, -1, 1.5, 99, 1000, NaN, Infinity]) {
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: _code })), 400, String(_code))
+        }
+      })
+
+      it('should ignore a non numeric code, which is what node errors carry', () => {
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 'ENOENT' })), 400)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: '413' })), 400)
+      })
+
+      it('should answer 400 when there is nothing to read', () => {
+        assert.strictEqual(app.server._statusForError(new Error('x')), 400)
+        assert.strictEqual(app.server._statusForError('a refusal written for the caller'), 400)
+        assert.strictEqual(app.server._statusForError(null), 400)
+        assert.strictEqual(app.server._statusForError(undefined), 400)
+      })
+
+      it('should never return a status res.end would throw on', (done) => {
+        const _shapes = [{ status: 0 }, { status: -1 }, { status: 1.5 }, { status: 1000 }, { code: 0 }, { code: 99 }]
+        let _remaining = _shapes.length
+
+        for (const _shape of _shapes) {
+          const _status = app.server._statusForError(Object.assign(new Error('x'), _shape))
+          const _probe = http.createServer((req, res) => { res.statusCode = _status; res.end('x') })
+
+          _probe.listen(0, () => {
+            http.get({ port: _probe.address().port }, (res) => {
+              res.resume()
+              res.on('end', () => {
+                assert.strictEqual(res.statusCode, _status)
+                _probe.close()
+                if (--_remaining === 0) { done() }
+              })
+            }).on('error', (err) => { assert.strictEqual(err, null, `${JSON.stringify(_shape)} -> ${_status}`) })
+          })
+        }
+      })
+    })
+
+    it('should log a server error raised after startup instead of calling run again', (done) => {
+      const _realLog = logger.log
+      const _logged = []
+      let _runCalls = 0
+
+      logger.log = (msg, level) => _logged.push(`${level} ${msg}`)
+      // run() already returned: re-entering it would answer the caller twice
+      app.server._server.emit('error', Object.assign(new Error('late'), { code: 'ECONNRESET' }))
+
+      setImmediate(() => {
+        logger.log = _realLog
+        assert.strictEqual(_runCalls, 0)
+        assert.strictEqual(_logged.some((l) => l.startsWith('error') && l.includes('late')), true, _logged.join('\n'))
+        done()
+      })
     })
 
     it('should decode route params like express did', (done) => {

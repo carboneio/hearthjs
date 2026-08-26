@@ -1,4 +1,5 @@
 const logger = require('../lib/logger')
+const os = require('os')
 const assert = require('assert')
 const path = require('path')
 const fs = require('fs')
@@ -650,5 +651,45 @@ describe('Cached formatting', () => {
       process.env.APP_LOG_STDOUT = _realEnv
     }
     logger._resetStdoutSetting()
+  })
+})
+
+describe('A log file that cannot be written', () => {
+  const _dir = path.join(os.tmpdir(), 'hearthjs-logfail-test')
+
+  afterEach(() => {
+    if (fs.existsSync(path.join(_dir, 'logs'))) {
+      fs.chmodSync(path.join(_dir, 'logs'), 0o700)
+    }
+    fs.rmSync(_dir, { recursive: true, force: true })
+  })
+
+  it('should keep serving instead of throwing when the stream fails', (done) => {
+    const _realEnv = process.env.HEARTH_SERVER_PATH
+    const _realWrite = process.stderr.write
+    const _reported = []
+
+    fs.mkdirSync(path.join(_dir, 'logs'), { recursive: true })
+    // A read only log directory is what a full or read only disk looks like
+    fs.chmodSync(path.join(_dir, 'logs'), 0o500)
+    process.env.HEARTH_SERVER_PATH = _dir
+    process.stderr.write = (msg) => { _reported.push(String(msg)); return true }
+
+    assert.doesNotThrow(() => {
+      logger.initLogger('prod')
+      logger.log('a line nobody can store', 'info')
+    })
+
+    setTimeout(() => {
+      process.stderr.write = _realWrite
+      process.env.HEARTH_SERVER_PATH = _realEnv
+
+      assert.strictEqual(logger._writeLogStream, null, 'the logger must give up on the file')
+      assert.strictEqual(_reported.some((m) => m.includes('cannot write')), true, _reported.join(''))
+      // and logging still works afterwards
+      assert.doesNotThrow(() => logger.log('still alive', 'info'))
+      // _stop must cope with the stream being gone
+      assert.doesNotThrow(() => logger._stop(done))
+    }, 150)
   })
 })

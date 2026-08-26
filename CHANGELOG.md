@@ -120,6 +120,9 @@ Injection, denial of service, disclosure, traversal, pollution, smuggling and pa
 
 #### 💥 Crash vectors
 
+- **A log file the process cannot write took the server down.** `fs.createWriteStream` had no `'error'` listener, and an `'error'` event with no listener throws where nothing catches it. A full disk, a read only filesystem or a log directory the process cannot write killed the process, at midnight when the new day's file is created. The logger now gives up on the file, reports once on stderr, and keeps serving.
+- **A server error after startup called `run()` a second time.** The `EADDRINUSE` listener stayed attached once listening had succeeded, so any later `error` event re-entered the startup callback. It is swapped for one that logs, which also means the event still has a listener rather than throwing.
+
 - **A typo in a schema name hung the server at startup, forever.** A route naming a schema that does not exist was counted in `_nbRouteDeclared` and then returned early, so it was never served and `_nbRouteServed` could never catch up. Startup polls that pair to decide the API is ready, so `run()` simply never called back, with a single `warn` to show for it. The schema is now looked up before the route is counted, and readiness is re-evaluated on every declaration failure.
 
 Nineteen common Node failure modes were reproduced against the framework. Seven took the whole process down; all seven report instead. `test/crashSafety.js` keeps them from coming back.
@@ -133,6 +136,8 @@ Nineteen common Node failure modes were reproduced against the framework. Seven 
 - **Async `before`/`after` handlers and addon hooks** produced unhandled rejections, which **terminate the process on Node >= 15**. They answer an error now, and a handler rejecting after `next()` cannot answer twice.
 
 #### 🐛 Fixes
+
+- **An express middleware's status code is honoured.** hearthjs read the response status from `err.code`, which only its own handlers set. Middlewares following the express convention use `err.status` / `err.statusCode`, so `express.json({ limit })` rejecting an oversized body answered **400** where express answers **413**. Both are read now, `err.code` still winning where hearthjs sets it. A status node would refuse (below 100, above 999, or not an integer) is ignored rather than passed to `res.end()`, which raises `ERR_HTTP_INVALID_STATUS_CODE` from a place nothing catches. As in express, `err.status` and `err.statusCode` are only trusted inside the 400-599 range; hearthjs still answers **400** by default where express answers 500.
 
 - **`hearthjs test -s` no longer watches the project.** The runner started the file watcher unconditionally, and its callback reloads the server in process: `server.close()` wipes the SQL registry, so a poll landing mid-suite failed whatever test was in flight with `Unknow SQL file`. `-s` runs the suite once and exits, so there is nothing to watch for. Reproduced deterministically by touching a watched `.sql` file mid-run: 2 tests failed before, 40 pass after.
 - The watcher compares `stat.mtimeMs` rounded to the millisecond rather than building a `Date` on every poll of every watched file. Same granularity, no allocation.
