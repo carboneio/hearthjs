@@ -254,23 +254,116 @@ describe('Server', () => {
       assert.strictEqual(_timeouts.includes('shutdown none'), true, _timeouts)
     })
 
+    it('should report the log file, and only the output when there is no file', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realOutput = logger._getLogOutput
+
+      logger.log = (msg) => _lines.push(String(msg))
+      logger._getLogOutput = () => 'both'
+      app.server._logStartup('prod')
+      logger._getLogOutput = () => 'stdout'
+      app.server._logStartup('prod')
+      logger.log = _realLog
+      logger._getLogOutput = _realOutput
+
+      const _withFile = _lines.filter((l) => l.includes('logs'))[0]
+      const _withoutFile = _lines.filter((l) => l.includes('logs'))[1]
+
+      assert.strictEqual(_withFile.includes(`${logger._getCurrentDateTime(false)}.log · output both`), true, _withFile)
+      // Nothing is written to a file: printing a path nobody writes to would lie
+      assert.strictEqual(_withoutFile.includes('.log'), false, _withoutFile)
+      assert.strictEqual(_withoutFile.includes('output stdout'), true, _withoutFile)
+    })
+
     it('should warn about the settings that only hurt once in trouble', () => {
       const _lines = []
       const _realLog = logger.log
-      const _realStdout = logger._mustLogOnStdout
+      const _realOutput = logger._getLogOutput
       const _realConfig = app.server.config
 
       logger.log = (msg, level) => _lines.push(`${level} ${msg}`)
-      logger._mustLogOnStdout = () => false
+      logger._getLogOutput = () => 'file'
       app.server.config = { APP_REQUEST_TIMEOUT: 0, APP_GRACEFUL_SHUTDOWN: false }
       app.server._logStartupWarnings('prod')
       logger.log = _realLog
-      logger._mustLogOnStdout = _realStdout
+      logger._getLogOutput = _realOutput
       app.server.config = _realConfig
 
       assert.strictEqual(_lines.length, 3, _lines.join('\n'))
       assert.strictEqual(_lines.every((l) => l.startsWith('warn')), true, _lines.join('\n'))
       assert.strictEqual(_lines.join('\n').includes('journalctl'), true, _lines.join('\n'))
+      assert.strictEqual(_lines.join('\n').includes('APP_LOG_OUTPUT'), true, _lines.join('\n'))
+    })
+
+    it('should not mention journalctl when the logs already reach stdout', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realOutput = logger._getLogOutput
+      const _realConfig = app.server.config
+
+      logger.log = (msg, level) => _lines.push(`${level} ${msg}`)
+      logger._getLogOutput = () => 'both'
+      app.server.config = { APP_REQUEST_TIMEOUT: 0, APP_GRACEFUL_SHUTDOWN: false }
+      app.server._logStartupWarnings('prod')
+      logger.log = _realLog
+      logger._getLogOutput = _realOutput
+      app.server.config = _realConfig
+
+      assert.strictEqual(_lines.join('\n').includes('journalctl'), false, _lines.join('\n'))
+    })
+
+    it('should say on stderr that logging is disabled when the output is none', () => {
+      const _reported = []
+      const _realWrite = process.stderr.write
+      const _realLog = logger.log
+      const _realOutput = logger._getLogOutput
+      const _realConfig = app.server.config
+
+      // logger.log writes nowhere in this mode, so the warning cannot use it
+      logger.log = () => {}
+      logger._getLogOutput = () => 'none'
+      app.server.config = _realConfig
+      process.stderr.write = (msg) => { _reported.push(String(msg)); return true }
+      app.server._logStartupWarnings('prod')
+      process.stderr.write = _realWrite
+      logger.log = _realLog
+      logger._getLogOutput = _realOutput
+
+      assert.strictEqual(_reported.join('').includes('logging is disabled'), true, _reported.join(''))
+    })
+
+    it('should name APP_LOG_STDOUT as deprecated when both settings are set', () => {
+      const _lines = []
+      const _realLog = logger.log
+      const _realEnvOutput = process.env.APP_LOG_OUTPUT
+      const _realEnvStdout = process.env.APP_LOG_STDOUT
+
+      process.env.APP_LOG_OUTPUT = 'both'
+      process.env.APP_LOG_STDOUT = 'true'
+      logger._resetLogOutputSetting()
+      logger.log = (msg, level) => _lines.push(`${level} ${msg}`)
+      app.server._logStartupWarnings('prod')
+      logger.log = _realLog
+
+      if (_realEnvOutput === undefined) {
+        delete process.env.APP_LOG_OUTPUT
+      } else {
+        process.env.APP_LOG_OUTPUT = _realEnvOutput
+      }
+
+      if (_realEnvStdout === undefined) {
+        delete process.env.APP_LOG_STDOUT
+      } else {
+        process.env.APP_LOG_STDOUT = _realEnvStdout
+      }
+
+      logger._resetLogOutputSetting()
+
+      const _deprecated = _lines.find((l) => l.includes('APP_LOG_STDOUT'))
+
+      assert.notStrictEqual(_deprecated, undefined, _lines.join('\n'))
+      assert.strictEqual(_deprecated.startsWith('warn'), true, _deprecated)
     })
 
     describe('_statusForError', () => {

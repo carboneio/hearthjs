@@ -237,7 +237,7 @@ describe('Logger', () => {
     })
   })
 
-  describe('Stdout logging (APP_LOG_STDOUT)', () => {
+  describe('Stdout logging (deprecated APP_LOG_STDOUT)', () => {
     const _logFilePath = path.join(__dirname, 'datasets', 'myApp', 'server', 'logs', '08-01-2019.log')
 
     let _logSpy = null
@@ -309,6 +309,213 @@ describe('Logger', () => {
         assert.strictEqual(_logSpy.args[0][0].includes('\u001b['), false, _logSpy.args[0][0])
       }
 
+      logger._stop(done)
+    })
+  })
+
+  describe('Log output (APP_LOG_OUTPUT)', () => {
+    const _serverPath = path.join(os.tmpdir(), 'hearthjs-log-output-test')
+    const _logDirectory = path.join(_serverPath, 'logs')
+    const _logFilePath = path.join(_logDirectory, '08-01-2019.log')
+
+    let _logSpy = null
+    let _errorSpy = null
+    let _realServerPath = null
+
+    before(() => {
+      mockdate.set(new Date('08/01/2019'))
+      _realServerPath = process.env.HEARTH_SERVER_PATH
+      _logSpy = sinon.spy(console, 'log')
+      _errorSpy = sinon.spy(console, 'error')
+    })
+
+    after(() => {
+      mockdate.reset()
+      console.log.restore()
+      console.error.restore()
+      process.env.HEARTH_SERVER_PATH = _realServerPath
+      logger._resetLogOutputSetting()
+    })
+
+    beforeEach(() => {
+      // A directory of its own: the point of half these tests is that nothing
+      // is created inside it
+      process.env.HEARTH_SERVER_PATH = _serverPath
+      fs.rmSync(_serverPath, { recursive: true, force: true })
+      // The server directory exists, its logs directory is what must not be created
+      fs.mkdirSync(_serverPath, { recursive: true })
+      _logSpy.resetHistory()
+      _errorSpy.resetHistory()
+    })
+
+    afterEach((done) => {
+      delete process.env.APP_LOG_OUTPUT
+      delete process.env.APP_LOG_STDOUT
+
+      logger._stop(() => {
+        fs.rmSync(_serverPath, { recursive: true, force: true })
+        done()
+      })
+    })
+
+    it('should write to the file only when APP_LOG_OUTPUT is file', (done) => {
+      process.env.APP_LOG_OUTPUT = 'file'
+      logger.initLogger('prod')
+      logger.log('to the file', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'file')
+      assert.strictEqual(_logSpy.called, false)
+      assert.strictEqual(_errorSpy.called, false)
+
+      logger._stop(() => {
+        assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8').includes('to the file'), true)
+        done()
+      })
+    })
+
+    it('should write to stdout only, and create no log directory, when APP_LOG_OUTPUT is stdout', (done) => {
+      process.env.APP_LOG_OUTPUT = 'stdout'
+      logger.initLogger('prod')
+      logger.log('to stdout', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'stdout')
+      assert.strictEqual(_logSpy.called, true)
+      assert.strictEqual(_logSpy.args[0][0].includes('to stdout'), true)
+      // What makes a read only container filesystem work
+      assert.strictEqual(fs.existsSync(_logDirectory), false)
+
+      logger._stop(done)
+    })
+
+    it('should write to both when APP_LOG_OUTPUT is both', (done) => {
+      process.env.APP_LOG_OUTPUT = 'both'
+      logger.initLogger('prod')
+      logger.log('to both', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'both')
+      assert.strictEqual(_logSpy.called, true)
+      assert.strictEqual(_logSpy.args[0][0].includes('to both'), true)
+
+      logger._stop(() => {
+        assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8').includes('to both'), true)
+        done()
+      })
+    })
+
+    it('should write nowhere, and create no log directory, when APP_LOG_OUTPUT is none', (done) => {
+      process.env.APP_LOG_OUTPUT = 'none'
+      logger.initLogger('prod')
+      logger.log('to nowhere', 'info')
+      logger.log('not even an error', 'error')
+
+      assert.strictEqual(logger._getLogOutput(), 'none')
+      assert.strictEqual(_logSpy.called, false)
+      assert.strictEqual(_errorSpy.called, false)
+      assert.strictEqual(fs.existsSync(_logDirectory), false)
+
+      logger._stop(done)
+    })
+
+    it('should fall back to the file when APP_LOG_OUTPUT holds something unknown', (done) => {
+      const _realWrite = process.stderr.write
+      const _reported = []
+
+      process.env.APP_LOG_OUTPUT = 'syslog'
+      process.stderr.write = (msg) => { _reported.push(String(msg)); return true }
+      logger.initLogger('prod')
+      process.stderr.write = _realWrite
+
+      assert.strictEqual(logger._getLogOutput(), 'file')
+      assert.strictEqual(_reported.join('').includes('APP_LOG_OUTPUT'), true, _reported.join(''))
+
+      logger._stop(done)
+    })
+
+    it('should behave as both when only the deprecated APP_LOG_STDOUT is true', (done) => {
+      process.env.APP_LOG_STDOUT = 'true'
+      logger.initLogger('prod')
+      logger.log('old setting', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'both')
+      assert.strictEqual(logger._isStdoutSettingDeprecated(), false)
+      assert.strictEqual(_logSpy.called, true)
+
+      logger._stop(() => {
+        assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8').includes('old setting'), true)
+        done()
+      })
+    })
+
+    it('should behave as file when neither setting is set', (done) => {
+      logger.initLogger('prod')
+      logger.log('the default', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'file')
+      assert.strictEqual(_logSpy.called, false)
+
+      logger._stop(() => {
+        assert.strictEqual(fs.readFileSync(_logFilePath, 'utf8').includes('the default'), true)
+        done()
+      })
+    })
+
+    it('should let APP_LOG_OUTPUT win over APP_LOG_STDOUT, and report it as deprecated', (done) => {
+      process.env.APP_LOG_OUTPUT = 'stdout'
+      process.env.APP_LOG_STDOUT = 'false'
+      logger.initLogger('prod')
+      logger.log('output wins', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'stdout')
+      assert.strictEqual(logger._isStdoutSettingDeprecated(), true)
+      assert.strictEqual(_logSpy.called, true)
+      assert.strictEqual(fs.existsSync(_logDirectory), false)
+
+      logger._stop(done)
+    })
+
+    it('should drop the file already opened when the config turns the output off', (done) => {
+      const _server = require('../lib/server')
+      const _realConfig = _server.config
+
+      // The logger is initialised before the config is read, so the file is
+      // opened first and the config can only close it afterwards
+      logger.initLogger('prod')
+      logger.log('written before the config was read', 'info')
+      assert.notStrictEqual(logger._writeLogStream, null)
+
+      _server.config = Object.assign({}, _realConfig, { APP_LOG_OUTPUT: 'stdout' })
+      // What server._loadConfig does once the config file is parsed
+      logger._resetLogOutputSetting()
+      logger._createLogFile()
+
+      assert.strictEqual(logger._getLogOutput(), 'stdout')
+      assert.strictEqual(logger._writeLogStream, null)
+
+      logger.log('and this one is not', 'info')
+      _server.config = _realConfig
+      logger._resetLogOutputSetting()
+
+      // Closing the stream is what flushes the line written before it
+      waitForLog(_logFilePath, (c) => c.includes('written before'), (_content) => {
+        assert.strictEqual(_content.includes('written before the config was read'), true, _content)
+        assert.strictEqual(_content.includes('and this one is not'), false, _content)
+        done()
+      })
+    })
+
+    it('should read the setting from the project config too', (done) => {
+      const _server = require('../lib/server')
+      const _realConfig = _server.config
+
+      _server.config = Object.assign({}, _realConfig, { APP_LOG_OUTPUT: 'none' })
+      logger.initLogger('prod')
+      logger.log('from the config', 'info')
+
+      assert.strictEqual(logger._getLogOutput(), 'none')
+      assert.strictEqual(fs.existsSync(_logDirectory), false)
+
+      _server.config = _realConfig
+      logger._resetLogOutputSetting()
       logger._stop(done)
     })
   })
@@ -633,24 +840,24 @@ describe('Cached formatting', () => {
     assert.notStrictEqual(logger._getCurrentDateTime(true), _first)
   }).timeout(5000)
 
-  it('should forget the cached stdout setting when the logger is initialised', () => {
-    const _realEnv = process.env.APP_LOG_STDOUT
+  it('should forget the cached output setting when the logger is initialised', () => {
+    const _realEnv = process.env.APP_LOG_OUTPUT
 
-    process.env.APP_LOG_STDOUT = 'true'
-    logger._resetStdoutSetting()
-    assert.strictEqual(logger._mustLogOnStdout(), true)
+    process.env.APP_LOG_OUTPUT = 'stdout'
+    logger._resetLogOutputSetting()
+    assert.strictEqual(logger._getLogOutput(), 'stdout')
 
-    delete process.env.APP_LOG_STDOUT
+    delete process.env.APP_LOG_OUTPUT
     // Still cached until something invalidates it
-    assert.strictEqual(logger._mustLogOnStdout(), true)
+    assert.strictEqual(logger._getLogOutput(), 'stdout')
 
-    logger._resetStdoutSetting()
-    assert.strictEqual(logger._mustLogOnStdout(), false)
+    logger._resetLogOutputSetting()
+    assert.strictEqual(logger._getLogOutput(), 'file')
 
     if (_realEnv !== undefined) {
-      process.env.APP_LOG_STDOUT = _realEnv
+      process.env.APP_LOG_OUTPUT = _realEnv
     }
-    logger._resetStdoutSetting()
+    logger._resetLogOutputSetting()
   })
 })
 

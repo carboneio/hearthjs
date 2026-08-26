@@ -59,13 +59,22 @@ hearthjs 5.0.0 · node v26.7.0 · pid 744637 · env PRODUCTION
   database   carbone_account_v2@127.0.0.1:5432 · statement timeout 10s
   loaded     14 apis · 132 routes · 3 crons · 2 addons
   timeouts   request 60s · shutdown 10s
-  logs       /srv/app/server/logs/08-23-2026.log · stdout on
+  logs       /srv/app/server/logs/08-23-2026.log · output both
   ready      412ms
 ```
 
 The version and pid tie a running process to a build, `loaded` catches an API or a cron that silently failed to register, and `ready in` catches a startup that is slowly getting worse. It also warns about the settings that only hurt once the server is already in trouble: logs not reaching journald in production, a disabled request timeout, and graceful shutdown turned off.
 
-**12. Logs can go to stdout (`APP_LOG_STDOUT`)** — in production hearthjs wrote nothing to stdout, so `journalctl` showed no application logs at all. Off by default; colours are dropped when the output is not a terminal.
+**12. One setting for the log destinations (`APP_LOG_OUTPUT`)** — in production hearthjs wrote nothing to stdout, so `journalctl` showed no application logs at all, and the file could not be turned off at all, which a read only container filesystem cannot accept.
+
+| `APP_LOG_OUTPUT` | logs go to |
+|------------------|------------|
+| `file` (default) | the daily file in `server/logs`, nothing on stdout |
+| `stdout` | stdout only, and no `logs` directory is created |
+| `both` | the daily file and stdout |
+| `none` | nowhere; one warning on stderr at startup says so |
+
+Set it in the environment or in the project config file. Colours are dropped when stdout is not a terminal.
 
 **13. Graceful shutdown** — `SIGTERM`/`SIGINT` used to drop in-flight requests and leak the PostgreSQL pool. hearthjs now stops the crons, stops accepting, marks draining answers `Connection: close`, closes idle keep-alive sockets, lets running requests finish, then closes the pool. `APP_SHUTDOWN_TIMEOUT` (default `10000` ms, `0` waits forever) caps it; a second signal exits immediately; `APP_GRACEFUL_SHUTDOWN=false` restores the old behaviour. `close()` is idempotent.
 
