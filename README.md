@@ -82,9 +82,11 @@ schemas: {
 name is reported at startup and the route is not served.
 
 Options: `max`, `window`, `key`, `scope`, `dryRun`, `onLimit`, `message`,
-`maxKeys`. Roll out safely with `dryRun: true`: would-be rejections are logged
-(`warn`, aggregated), nothing is blocked. Limits are per process: with N
-instances behind a proxy, size them for ~N× the intended rate.
+`maxKeys`, `headers`. Roll out safely with `dryRun: true`: would-be rejections
+are logged (`warn`, aggregated), nothing is blocked. Set `headers: true` to emit
+the `RateLimit-*` headers on that route (off by default, like the global net's
+`APP_RATE_LIMIT_GLOBAL_HEADERS`). Limits are per process: with N instances behind
+a proxy, size them for ~N× the intended rate.
 
 **Testing.** Define your limits normally — no `dryRun` seam in production code —
 and set `APP_RATE_LIMIT_ROUTE=false` in the test config so per-route limits never

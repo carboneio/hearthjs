@@ -193,4 +193,48 @@ describe('Test client', () => {
       })
     })
   })
+
+  describe('Redirects', () => {
+    it('should follow a redirect by default', (done) => {
+      let user = new TestClient('test@test.fr', 'Nope')
+
+      // /redirect -> /test; followed, so we land on /test's answer
+      user.get('/redirect', (err, response, body) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 200, 'the 302 was followed to a 200')
+        assert.strictEqual(body.success, false)
+        assert.strictEqual(body.message, 'You are not login')
+        done()
+      })
+    })
+
+    it('should stop on the 3xx and expose the Location with followRedirect false', (done) => {
+      let user = new TestClient('test@test.fr', 'Nope', { followRedirect: false })
+
+      user.get('/redirect', (err, response) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 302, 'the redirect is not followed')
+        assert.strictEqual(response.headers.location, '/test', 'the Location header is available')
+        done()
+      })
+    })
+
+    it('should let the followRedirect flag be flipped on an existing client', (done) => {
+      let user = new TestClient('test@test.fr', 'Nope')
+
+      user.followRedirect = false
+      user.get('/redirect', (err, response) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 302)
+
+        user.followRedirect = true
+        user.get('/redirect', (err, response, body) => {
+          assert.strictEqual(err, null)
+          assert.strictEqual(response.statusCode, 200)
+          assert.strictEqual(body.success, false)
+          done()
+        })
+      })
+    })
+  })
 })

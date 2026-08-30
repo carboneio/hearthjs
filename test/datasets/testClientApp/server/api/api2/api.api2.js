@@ -64,6 +64,12 @@ const schemas = {
       next()
     },
     successMsg: 'Disconnected'
+  },
+
+  redirectMe: {
+    before: (req, res, next) => {
+      return res.redirect('/test')
+    }
   }
 }
 
@@ -74,4 +80,5 @@ hearth.api.define('testClient', schemas, (server) => {
   server.put('/test', 'putTest')
   server.post('/login', 'login')
   server.get('/logout', 'logout')
+  server.get('/redirect', 'redirectMe')
 })

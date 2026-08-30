@@ -571,6 +571,29 @@ describe('Rate limit', () => {
       assert.strictEqual(_body.message, 'Doucement !')
     })
 
+    it('should emit RateLimit headers on a route when the profile opts in', () => {
+      const _middleware = rateLimit._routeMiddleware({ max: 5, window: 60, headers: true }, 'GET /x')
+
+      const _first = run(_middleware)
+
+      assert.strictEqual(_first.res.headers['ratelimit-limit'], '5')
+      assert.strictEqual(_first.res.headers['ratelimit-remaining'], '4')
+
+      const _second = run(_middleware)
+
+      assert.strictEqual(_second.res.headers['ratelimit-remaining'], '3')
+    })
+
+    it('should not emit RateLimit headers on a route by default', () => {
+      const _middleware = rateLimit._routeMiddleware({ max: 5, window: 60 }, 'GET /x')
+
+      assert.strictEqual(run(_middleware).res.headers['ratelimit-limit'], undefined)
+    })
+
+    it('should reject a non-boolean headers option', () => {
+      assert.throws(() => rateLimit.define('p', { headers: 'yes' }), /headers must be a boolean/)
+    })
+
     it('should let rejected requests through in dryRun mode, but log them', () => {
       const _middleware = rateLimit._routeMiddleware({ max: 1, window: 60, dryRun: true }, 'GET /x')
 
