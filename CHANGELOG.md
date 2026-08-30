@@ -224,7 +224,7 @@ Dev: `eslint` 5 -> 9 (+ `neostandard`), `sinon` 7 -> 22, `nyc` 14 -> 18, `multer
 
 #### ✅ Tests & tooling
 
-- **703 tests** (was 431), green on Node 26. Full run **38s -> 20s**.
+- **721 tests** (was 431), green on Node 26. Full run **38s -> 20s**.
 - New suites: `expressCompat` (25 differential tests running the same handler on express and on restana), `gracefulShutdown`, `crashSafety`, `security`, `asyncSafety`, `performance` (guards the complexity of `sqlToJson` and the O(1) hot path of the rate limiter), `rateLimit` (75 tests, driven clock, zero sleeps), plus `watch` and `socket`, which had no tests at all. Security-audit exploit PoCs live alongside the feature they cover (the `:hard` and loop-safety checks in `mustache`, the query-redaction checks in `logger`, the per-connection `statement_timeout` check in `database`).
 
 #### 🧪 Test helpers

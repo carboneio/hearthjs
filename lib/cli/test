@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const { program } = require('commander')
-const test = require('../test')
+const test = require('../testRunner')
 const debug = require('debug')
 
 program

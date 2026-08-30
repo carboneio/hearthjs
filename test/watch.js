@@ -158,7 +158,7 @@ describe('Watch', () => {
 })
 
 describe('Test runner watching', () => {
-  const testRunner = require('../lib/test')
+  const testRunner = require('../lib/testRunner')
 
   let _watchCalls = 0
   let _realWatch = null

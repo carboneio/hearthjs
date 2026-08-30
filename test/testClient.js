@@ -198,12 +198,14 @@ describe('Test client', () => {
     it('should follow a redirect by default', (done) => {
       let user = new TestClient('test@test.fr', 'Nope')
 
-      // /redirect -> /test; followed, so we land on /test's answer
+      // /redirect -> /test; followed, so we land on /test's answer (400 here,
+      // since /test refuses an unauthenticated caller). The point is that the
+      // 302 was followed rather than surfaced.
       user.get('/redirect', (err, response, body) => {
         assert.strictEqual(err, null)
-        assert.strictEqual(response.statusCode, 200, 'the 302 was followed to a 200')
+        assert.notStrictEqual(response.statusCode, 302, 'the 302 was followed, not returned')
         assert.strictEqual(body.success, false)
-        assert.strictEqual(body.message, 'You are not login')
+        assert.strictEqual(body.message, 'You are not login', 'we reached /test')
         done()
       })
     })
@@ -230,7 +232,7 @@ describe('Test client', () => {
         user.followRedirect = true
         user.get('/redirect', (err, response, body) => {
           assert.strictEqual(err, null)
-          assert.strictEqual(response.statusCode, 200)
+          assert.notStrictEqual(response.statusCode, 302, 'now followed')
           assert.strictEqual(body.success, false)
           done()
         })
