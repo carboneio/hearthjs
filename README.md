@@ -22,20 +22,25 @@ per second). A rejected request gets `429`, `Retry-After` and
 `{ success: false, data: {}, message }` body — before cookie parsing,
 body parsing, addons and middleware ever run.
 
-**Every route** — in the environment or the project config file:
+There are two independent switches — the **global** per-IP net, and the
+**per-route** limits (the `rateLimit` schema keys). Set these in the environment
+or the project config file:
 
 | key | default | meaning |
 |-----|---------|---------|
-| `APP_RATE_LIMIT` | `false` | master switch |
-| `APP_RATE_LIMIT_MAX` | `100` | burst per key |
-| `APP_RATE_LIMIT_WINDOW` | `60` | seconds to refill `MAX` tokens |
-| `APP_RATE_LIMIT_SKIP` | | comma-separated path prefixes never limited, e.g. `/health,/api/webhooks` — matched on the decoded path, on segment boundaries (`/api/webhooks` skips `/api/webhooks/stripe`, not `/api/webhooksX`) |
-| `APP_RATE_LIMIT_MAX_KEYS` | `100000` | cap on tracked keys (~125 B each); above it, new keys are limited collectively through 256 shared buckets |
-| `APP_RATE_LIMIT_HEADERS` | `false` | emit `RateLimit-*` headers on every response |
+| `APP_RATE_LIMIT_GLOBAL` | `false` | turn on the **global** per-IP net |
+| `APP_RATE_LIMIT_GLOBAL_MAX` | `100` | global net: burst per key |
+| `APP_RATE_LIMIT_GLOBAL_WINDOW` | `60` | global net: seconds to refill `MAX` tokens |
+| `APP_RATE_LIMIT_GLOBAL_SKIP` | | global net: comma-separated path prefixes never limited, e.g. `/health,/api/webhooks` — matched on the decoded path, on segment boundaries (`/api/webhooks` skips `/api/webhooks/stripe`, not `/api/webhooksX`) |
+| `APP_RATE_LIMIT_GLOBAL_MAX_KEYS` | `100000` | global net: cap on tracked keys (~125 B each); above it, new keys are limited collectively through 256 shared buckets |
+| `APP_RATE_LIMIT_GLOBAL_HEADERS` | `false` | global net: emit `RateLimit-*` headers on every response |
+| `APP_RATE_LIMIT_ROUTE` | `true` | are the **per-route** limits active? Set `false` (e.g. in the test config) to turn every `rateLimit:` schema limit off. Warns at startup |
 
-Only `true` turns the switch on: any other value (`1`, `yes`, `on`) warns and
-stays off. An invalid number warns and uses the default — never a truncated
-parse.
+The two are independent: the per-route limits (below) run whether or not the
+global net is on, and `APP_RATE_LIMIT_ROUTE=false` turns them off without
+touching the global net. Only `true` turns a switch on: any other value (`1`,
+`yes`, `on`) warns and stays off. An invalid number warns and uses the default —
+never a truncated parse.
 
 The key is `req.ip`: the socket address, or the **rightmost** `X-Forwarded-For`
 hop (the one your proxy appended) when `APP_TRUST_PROXY` is true. Change it, or
@@ -79,8 +84,29 @@ name is reported at startup and the route is not served.
 Options: `max`, `window`, `key`, `scope`, `dryRun`, `onLimit`, `message`,
 `maxKeys`. Roll out safely with `dryRun: true`: would-be rejections are logged
 (`warn`, aggregated), nothing is blocked. Limits are per process: with N
-instances behind a proxy, size them for ~N× the intended rate. Full design:
-`rate-limit-specification.md`.
+instances behind a proxy, size them for ~N× the intended rate.
+
+**Testing.** Define your limits normally — no `dryRun` seam in production code —
+and set `APP_RATE_LIMIT_ROUTE=false` in the test config so per-route limits never
+interfere with the rest of the suite. One dedicated test flips them on for a real
+endpoint and asserts the `429`:
+
+```js
+// test config: "APP_RATE_LIMIT_ROUTE": false
+describe('rate limit (login)', () => {
+  before(() => hearthjs.rateLimit.enable())     // per-route limits on
+  afterEach(() => hearthjs.rateLimit.reset())   // clear buckets between cases
+  after(() => hearthjs.rateLimit.disable())     // back off for other tests
+
+  it('returns 429 after N attempts from one IP', /* hit /api/login N+1 times */)
+})
+```
+
+`enable()` / `disable()` flip the `APP_RATE_LIMIT_ROUTE` switch at runtime;
+`reset()` clears every limiter's bucket state (keeping the profiles) so one
+test's requests never spill into the next. Vary the key between cases by sending
+a different `X-Forwarded-For` (with `APP_TRUST_PROXY=true`) when you need
+distinct buckets.
 
 ## Where the logs go
 

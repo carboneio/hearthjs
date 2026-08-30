@@ -3,12 +3,13 @@ const rateLimit = require('../lib/rateLimit')
 const logger = require('../lib/logger')
 
 const ENV_KEYS = [
-  'APP_RATE_LIMIT',
-  'APP_RATE_LIMIT_MAX',
-  'APP_RATE_LIMIT_WINDOW',
-  'APP_RATE_LIMIT_MAX_KEYS',
-  'APP_RATE_LIMIT_SKIP',
-  'APP_RATE_LIMIT_HEADERS'
+  'APP_RATE_LIMIT_GLOBAL',
+  'APP_RATE_LIMIT_GLOBAL_MAX',
+  'APP_RATE_LIMIT_GLOBAL_WINDOW',
+  'APP_RATE_LIMIT_GLOBAL_MAX_KEYS',
+  'APP_RATE_LIMIT_GLOBAL_SKIP',
+  'APP_RATE_LIMIT_GLOBAL_HEADERS',
+  'APP_RATE_LIMIT_ROUTE'
 ]
 
 /**
@@ -207,6 +208,132 @@ describe('Rate limit', () => {
 
       assert.strictEqual(_limiter.peek('k', 0), 3)
       assert.strictEqual(_limiter.peek('k', 0), 3, 'peek must not consume')
+    })
+  })
+
+  describe('test helpers: reset', () => {
+    it('should hand a limiter a full bucket again after reset()', () => {
+      const _limiter = rateLimit._createLimiter(2, 60, 1000)
+
+      _limiter.consume('k', 0)
+      _limiter.consume('k', 0)
+      assert.strictEqual(_limiter.consume('k', 0) > 0, true, 'drained')
+
+      _limiter.reset()
+
+      assert.strictEqual(_limiter.consume('k', 0), 0, 'a reset bucket is full again')
+      assert.strictEqual(_limiter.size(), 1)
+    })
+
+    it('should clear every wired-in limiter through reset()', () => {
+      const _mwA = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /a')
+      const _mwB = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /b')
+
+      run(_mwA)
+      run(_mwB)
+      assert.strictEqual(run(_mwA).res.statusCode, 429)
+      assert.strictEqual(run(_mwB).res.statusCode, 429)
+
+      rateLimit.reset()
+
+      assert.strictEqual(run(_mwA).passed, true, 'route A buckets cleared')
+      assert.strictEqual(run(_mwB).passed, true, 'route B buckets cleared')
+    })
+
+    it('should not resurrect an ad-hoc _createLimiter through reset()', () => {
+      // Only middleware limiters are tracked; a bare _createLimiter is not
+      const _adhoc = rateLimit._createLimiter(1, 60, 1000)
+      _adhoc.consume('k', 0)
+
+      rateLimit.reset()
+
+      assert.strictEqual(_adhoc.consume('k', 0) > 0, true, 'an untracked limiter is untouched')
+    })
+  })
+
+  describe('test helpers: enable / disable / APP_RATE_LIMIT_ROUTE', () => {
+    it('should bypass route limiters after disable(), and block again after enable()', () => {
+      const _mw = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /x')
+
+      rateLimit.disable()
+      for (let i = 0; i < 5; i++) {
+        assert.strictEqual(run(_mw).passed, true, 'disabled: route limiter passes through')
+      }
+
+      rateLimit.enable()
+      assert.strictEqual(run(_mw).passed, true)
+      assert.strictEqual(run(_mw).res.statusCode, 429, 'enabled again: the limit blocks')
+    })
+
+    it('should turn route limits off from APP_RATE_LIMIT_ROUTE=false, and warn', () => {
+      process.env.APP_RATE_LIMIT_ROUTE = 'false'
+
+      // Reading the config (as the server does at boot) sets the route switch
+      rateLimit._globalMiddleware(null)
+
+      const _route = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /x')
+
+      for (let i = 0; i < 5; i++) {
+        assert.strictEqual(run(_route).passed, true, 'route limiter bypassed')
+      }
+
+      const _warn = _logs.filter((log) => log.level === 'warn' && log.msg.includes('per-route rate limits are OFF'))
+
+      assert.strictEqual(_warn.length, 1, 'a downgrade must be loud')
+    })
+
+    it('should leave the GLOBAL net running while route limits are off', () => {
+      // The whole point of two switches: they are independent
+      process.env.APP_RATE_LIMIT_ROUTE = 'false'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
+
+      const _global = rateLimit._globalMiddleware(null)
+      const _route = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /x')
+
+      // Route limits off...
+      for (let i = 0; i < 5; i++) {
+        assert.strictEqual(run(_route).passed, true, 'route limiter is off')
+      }
+
+      // ...but the global net still enforces
+      assert.strictEqual(run(_global).passed, true)
+      assert.strictEqual(run(_global).res.statusCode, 429, 'the global net is unaffected by APP_RATE_LIMIT_ROUTE')
+    })
+
+    it('should let a dedicated test flip on, assert 429, and disable again', () => {
+      // The full carbone-account pattern, in miniature: route limits off in the
+      // test config, one test turns them on.
+      process.env.APP_RATE_LIMIT_ROUTE = 'false'
+      rateLimit._globalMiddleware(null)                                  // reads the switch → route off
+      const _login = rateLimit._routeMiddleware({ max: 3, window: 300 }, 'POST /api/login')
+
+      // The rest of the suite: route limits off, no interference
+      for (let i = 0; i < 10; i++) {
+        assert.strictEqual(run(_login).passed, true)
+      }
+
+      // before(): enable(), then N+1 from one IP → 429
+      rateLimit.enable()
+      assert.strictEqual(run(_login).passed, true)
+      assert.strictEqual(run(_login).passed, true)
+      assert.strictEqual(run(_login).passed, true)
+      assert.strictEqual(run(_login).res.statusCode, 429, 'the 4th attempt is limited')
+
+      // afterEach(): reset() the buckets; after(): disable() again
+      rateLimit.reset()
+      rateLimit.disable()
+      assert.strictEqual(run(_login).passed, true, 'disabled again for the next test')
+    })
+
+    it('should keep route limits on by default (APP_RATE_LIMIT_ROUTE absent), silently', () => {
+      rateLimit._globalMiddleware(null)
+
+      const _route = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'GET /x')
+
+      assert.strictEqual(run(_route).passed, true)
+      assert.strictEqual(run(_route).res.statusCode, 429, 'per-route limits are on by default')
+      assert.strictEqual(_logs.filter((log) => log.msg.includes('per-route rate limits are OFF')).length, 0)
     })
   })
 
@@ -670,30 +797,30 @@ describe('Rate limit', () => {
     it('should be off by default', () => {
       assert.strictEqual(rateLimit._globalMiddleware(null), null)
       assert.strictEqual(rateLimit._globalMiddleware({}), null)
-      assert.strictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT: false }), null)
+      assert.strictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT_GLOBAL: false }), null)
     })
 
     it('should turn on from the config file', () => {
-      assert.notStrictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT: true }), null)
+      assert.notStrictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT_GLOBAL: true }), null)
     })
 
     it('should turn on from the environment', () => {
-      process.env.APP_RATE_LIMIT = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
       assert.notStrictEqual(rateLimit._globalMiddleware(null), null)
     })
 
     it('should let the environment win over the config file', () => {
-      process.env.APP_RATE_LIMIT = 'false'
-      assert.strictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT: true }), null)
+      process.env.APP_RATE_LIMIT_GLOBAL = 'false'
+      assert.strictEqual(rateLimit._globalMiddleware({ APP_RATE_LIMIT_GLOBAL: true }), null)
     })
 
-    it('should warn loudly on an unrecognized APP_RATE_LIMIT value', () => {
+    it('should warn loudly on an unrecognized APP_RATE_LIMIT_GLOBAL value', () => {
       // '1' reads as "on" to a human: staying silently off is a silent disable
-      process.env.APP_RATE_LIMIT = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = '1'
 
       assert.strictEqual(rateLimit._globalMiddleware(null), null)
 
-      const _warn = _logs.filter((log) => log.level === 'warn' && log.msg.includes("APP_RATE_LIMIT='1' is not recognized"))
+      const _warn = _logs.filter((log) => log.level === 'warn' && log.msg.includes("APP_RATE_LIMIT_GLOBAL='1' is not recognized"))
 
       assert.strictEqual(_warn.length, 1)
       assert.strictEqual(_logs.length, 1, "'false' and unset must stay silent, only the ambiguous value warns")
@@ -701,8 +828,8 @@ describe('Rate limit', () => {
 
     it('should not warn when the switch is plainly off', () => {
       rateLimit._globalMiddleware(null)
-      rateLimit._globalMiddleware({ APP_RATE_LIMIT: false })
-      process.env.APP_RATE_LIMIT = 'false'
+      rateLimit._globalMiddleware({ APP_RATE_LIMIT_GLOBAL: false })
+      process.env.APP_RATE_LIMIT_GLOBAL = 'false'
       rateLimit._globalMiddleware(null)
 
       assert.strictEqual(_logs.length, 0)
@@ -710,8 +837,8 @@ describe('Rate limit', () => {
 
     it('should parse scientific notation instead of truncating it', () => {
       // parseInt('1e9') === 1 would turn a fat-finger into a reject-everything limiter
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1e9'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1e9'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -722,9 +849,9 @@ describe('Rate limit', () => {
       assert.strictEqual(_logs.length, 0, 'a valid number must not warn')
     })
 
-    it('should honor APP_RATE_LIMIT_MAX and reject above it', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '2'
+    it('should honor APP_RATE_LIMIT_GLOBAL_MAX and reject above it', () => {
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '2'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -734,8 +861,8 @@ describe('Rate limit', () => {
     })
 
     it('should fall back to the default on an invalid value, and warn', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = 'many'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = 'many'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -744,15 +871,15 @@ describe('Rate limit', () => {
         assert.strictEqual(run(_middleware).passed, true)
       }
 
-      const _warn = _logs.filter((log) => log.level === 'warn' && log.msg.includes("APP_RATE_LIMIT_MAX='many'"))
+      const _warn = _logs.filter((log) => log.level === 'warn' && log.msg.includes("APP_RATE_LIMIT_GLOBAL_MAX='many'"))
 
       assert.strictEqual(_warn.length, 1, 'an invalid number on a security control must be loud')
     })
 
-    it('should skip the APP_RATE_LIMIT_SKIP prefixes', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
-      process.env.APP_RATE_LIMIT_SKIP = '/health, /api/webhooks'
+    it('should skip the APP_RATE_LIMIT_GLOBAL_SKIP prefixes', () => {
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/health, /api/webhooks'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -766,9 +893,9 @@ describe('Rate limit', () => {
     })
 
     it('should match skip prefixes on segment boundaries only', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
-      process.env.APP_RATE_LIMIT_SKIP = '/api/webhooks'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/api/webhooks'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -784,9 +911,9 @@ describe('Rate limit', () => {
     })
 
     it('should compare skip prefixes on the decoded path', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
-      process.env.APP_RATE_LIMIT_SKIP = '/health'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/health'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -801,9 +928,9 @@ describe('Rate limit', () => {
     })
 
     it('should treat a trailing slash on a skip prefix like none', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
-      process.env.APP_RATE_LIMIT_SKIP = '/health/'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/health/'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -814,8 +941,8 @@ describe('Rate limit', () => {
     })
 
     it('should use the configured skip function', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
 
       rateLimit.configure({ skip: (req) => req.method === 'OPTIONS' })
 
@@ -830,8 +957,8 @@ describe('Rate limit', () => {
     })
 
     it('should not skip when the skip function throws', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
 
       rateLimit.configure({ skip: () => { throw new Error('boom') } })
 
@@ -842,8 +969,8 @@ describe('Rate limit', () => {
     })
 
     it('should use the configured key generator', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
 
       rateLimit.configure({ key: (req) => req.headers.authorization || req.ip })
 
@@ -855,8 +982,8 @@ describe('Rate limit', () => {
     })
 
     it('should use the configured onLimit handler', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
 
       let _called = false
 
@@ -869,10 +996,10 @@ describe('Rate limit', () => {
       assert.strictEqual(_called, true)
     })
 
-    it('should emit the RateLimit headers when APP_RATE_LIMIT_HEADERS is on', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '5'
-      process.env.APP_RATE_LIMIT_HEADERS = 'true'
+    it('should emit the RateLimit headers when APP_RATE_LIMIT_GLOBAL_HEADERS is on', () => {
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '5'
+      process.env.APP_RATE_LIMIT_GLOBAL_HEADERS = 'true'
 
       const _middleware = rateLimit._globalMiddleware(null)
 
@@ -889,7 +1016,7 @@ describe('Rate limit', () => {
 
   describe('composition', () => {
     it('should not leave any state on the request object', () => {
-      process.env.APP_RATE_LIMIT = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
 
       const _global = rateLimit._globalMiddleware(null)
       const _route = rateLimit._routeMiddleware({ max: 10, window: 60 }, 'GET /x')
@@ -905,7 +1032,7 @@ describe('Rate limit', () => {
     })
 
     it('should let the tighter route bucket reject what the global one allows', () => {
-      process.env.APP_RATE_LIMIT = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
 
       const _global = rateLimit._globalMiddleware(null)
       const _route = rateLimit._routeMiddleware({ max: 1, window: 60 }, 'POST /login')
@@ -1017,9 +1144,9 @@ describe('Rate limit', () => {
     }
 
     it('should serve the burst then answer 429 with retry-after and a JSON body', (done) => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '3'
-      process.env.APP_RATE_LIMIT_SKIP = '/health'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '3'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/health'
 
       const _service = restana({ securityHeaders: false, prioRequestsProcessing: false })
 
@@ -1064,8 +1191,8 @@ describe('Rate limit', () => {
     }).timeout(10000)
 
     it('should key real requests on the connection, not on a spoofable header', (done) => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_MAX = '1'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_MAX = '1'
 
       const _service = restana({ securityHeaders: false, prioRequestsProcessing: false })
 

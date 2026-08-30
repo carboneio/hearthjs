@@ -597,13 +597,13 @@ describe('Performance', function () {
     })
 
     it('should not allocate per request on a skipped path', () => {
-      process.env.APP_RATE_LIMIT = 'true'
-      process.env.APP_RATE_LIMIT_SKIP = '/health,/api/webhooks'
+      process.env.APP_RATE_LIMIT_GLOBAL = 'true'
+      process.env.APP_RATE_LIMIT_GLOBAL_SKIP = '/health,/api/webhooks'
 
       const middleware = rateLimit._globalMiddleware(null)
 
-      delete process.env.APP_RATE_LIMIT
-      delete process.env.APP_RATE_LIMIT_SKIP
+      delete process.env.APP_RATE_LIMIT_GLOBAL
+      delete process.env.APP_RATE_LIMIT_GLOBAL_SKIP
 
       const req = { ip: '203.0.113.7', url: '/api/webhooks/stripe', method: 'GET', headers: {}, socket: { remoteAddress: '203.0.113.7' } }
       const res = { headers: {}, statusCode: 200, setHeader: function () {}, end: function () {} }

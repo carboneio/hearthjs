@@ -107,13 +107,14 @@ It applies only when `JOURNAL_STREAM` is set, which systemd does when it collect
 
 #### ✨ Built-in rate limiter
 
-Opt-in, off by default — in-memory token bucket, no external store. Usage in the README, full design in `rate-limit-specification.md`.
+Opt-in, off by default — in-memory token bucket, no external store. Usage in the README. Two independent switches: the **global** per-IP net and the **per-route** limits.
 
-- Global limiter on every route with `APP_RATE_LIMIT=true` (+ `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_WINDOW`, `APP_RATE_LIMIT_MAX_KEYS`, `APP_RATE_LIMIT_SKIP`, `APP_RATE_LIMIT_HEADERS`). Runs before cookie and body parsing.
+- Global limiter on every route with `APP_RATE_LIMIT_GLOBAL=true` (+ `APP_RATE_LIMIT_GLOBAL_MAX`, `APP_RATE_LIMIT_GLOBAL_WINDOW`, `APP_RATE_LIMIT_GLOBAL_MAX_KEYS`, `APP_RATE_LIMIT_GLOBAL_SKIP`, `APP_RATE_LIMIT_GLOBAL_HEADERS`). Runs before cookie and body parsing.
 - Per-route limits with the new `rateLimit` schema key: an inline `{ max, window, key, scope, dryRun, onLimit, message, maxKeys }` object, or the name of a profile declared with `hearthjs.rateLimit.define(name, options)` in `beforeInit`. `scope: 'shared'` (default) makes routes on the same profile share one budget per key; the limiter runs before addons and user middleware. A rejected request gets `429` + `Retry-After` with the standard response body.
 - `hearthjs.rateLimit.configure({ key, skip, onLimit })` customizes the global limiter; `dryRun: true` logs would-be rejections without blocking, for a safe rollout.
 - A route referencing an unknown profile is reported at startup and not served: a broken limit never ships a route unlimited.
-- Hardened by design: the 429 carries `Retry-After` and `Cache-Control: no-store` with a pre-serialized body; above `maxKeys`, new keys are limited collectively through a ring of 256 shared buckets (bounded memory, no service-wide lockout); skip prefixes match the decoded path on segment boundaries; key generators are synchronous — one that throws or returns no string falls back to the client address with a throttled warning, as does a throwing `onLimit`; logged keys are stripped of control characters and cut to 8 characters; unrecognized or invalid `APP_RATE_LIMIT*` values warn instead of being silently ignored or truncated (`1e9` parses as a billion, not `1`).
+- Testable with no production seam: `APP_RATE_LIMIT_ROUTE=false` (config or env) turns the per-route limits off and warns at startup, so a project defines limits normally and disables them in the test config. `hearthjs.rateLimit.enable()` / `disable()` flip that switch at runtime and `reset()` clears every limiter's bucket state, so one dedicated test can turn limiting on, assert a real `429`, and reset between cases.
+- Hardened by design: the 429 carries `Retry-After` and `Cache-Control: no-store` with a pre-serialized body; above `maxKeys`, new keys are limited collectively through a ring of 256 shared buckets (bounded memory, no service-wide lockout); skip prefixes match the decoded path on segment boundaries; key generators are synchronous — one that throws or returns no string falls back to the client address with a throttled warning, as does a throwing `onLimit`; logged keys are stripped of control characters and cut to 8 characters; unrecognized or invalid `APP_RATE_LIMIT_GLOBAL*` values warn instead of being silently ignored or truncated (`1e9` parses as a billion, not `1`).
 
 #### 🔥 Performance
 
@@ -223,7 +224,7 @@ Dev: `eslint` 5 -> 9 (+ `neostandard`), `sinon` 7 -> 22, `nyc` 14 -> 18, `multer
 
 #### ✅ Tests & tooling
 
-- **695 tests** (was 431), green on Node 26. Full run **38s -> 20s**.
+- **703 tests** (was 431), green on Node 26. Full run **38s -> 20s**.
 - New suites: `expressCompat` (25 differential tests running the same handler on express and on restana), `gracefulShutdown`, `crashSafety`, `security`, `asyncSafety`, `performance` (guards the complexity of `sqlToJson` and the O(1) hot path of the rate limiter), `rateLimit` (75 tests, driven clock, zero sleeps), plus `watch` and `socket`, which had no tests at all. Security-audit exploit PoCs live alongside the feature they cover (the `:hard` and loop-safety checks in `mustache`, the query-redaction checks in `logger`, the per-connection `statement_timeout` check in `database`).
 - The suite waits on conditions and events instead of sleeping, and stops test servers through the child process handle rather than `process.kill(pid)` — a recycled pid is how a run managed to terminate `npm` itself.
 - `eslint.config.js` added: the project had ESLint dependencies but no committed configuration, so linting never ran.
