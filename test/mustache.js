@@ -773,6 +773,154 @@ describe('Mustache', () => {
           done()
         })
       })
+
+      // SECURITY: `:hard` pastes its value straight into the SQL text, and the
+      // template `data` is the live request object, so an arbitrary value would
+      // be SQL injection. It is restricted to safe SQL identifiers / ORDER BY
+      // terms; anything else is rejected before the SQL is built.
+      it('should accept genuine identifiers and ORDER BY terms', () => {
+        const _ok = [
+          'id', 'my_table', 'MixedCase', '_leading', 'a1', 'schema.table',
+          'schema.table.column', 'name ASC', 'name DESC', 'name desc',
+          'created_at DESC NULLS LAST', 'a, b, c', 'first ASC, second DESC',
+          '1', '1 DESC', 42, '  spaced  '
+        ]
+
+        for (const _value of _ok) {
+          assert.strictEqual(mustache._isSafeHardValue(_value), true, `should accept ${JSON.stringify(_value)}`)
+        }
+      })
+
+      it('should reject every injection shape', () => {
+        const _bad = [
+          'version()', 'now()', "name'; DROP TABLE users; --", '1; DROP TABLE users',
+          '1 OR 1=1', '1=1', 'a UNION SELECT b', 'a/**/b', 'a--b', '"quoted"',
+          "'literal'", 'a;b', 'a(b)', 'a[b]', 'a|b', 'a b', 'a\nb', 'name ASC; DELETE',
+          '', '   ', ',', 'a,', ',a', 'a,,b', 'name ASCII', 'name FOO',
+          true, false, null, undefined, {}, [], ['id'], 42.5, 'x'.repeat(257)
+        ]
+
+        for (const _value of _bad) {
+          assert.strictEqual(mustache._isSafeHardValue(_value), false, `should reject ${JSON.stringify(_value)}`)
+        }
+      })
+
+      it('should reject an injection payload passed through :hard at render time', (done) => {
+        mustache.render('SELECT {{ data.p:hard }}', { p: 'version()' }, (err, result) => {
+          assert.notStrictEqual(err, null, 'an injectable :hard value must be rejected')
+          assert.strictEqual(/not a valid SQL identifier/.test(err.toString()), true, err && err.toString())
+          assert.strictEqual(result, undefined, 'no SQL is produced for a rejected value')
+          done()
+        })
+      })
+
+      it('should still paste a legitimate multi-column ORDER BY', (done) => {
+        mustache.render('SELECT * FROM t ORDER BY {{ data.sort:hard }}', { sort: 'created_at DESC, id ASC' }, (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.string, 'SELECT * FROM t ORDER BY created_at DESC, id ASC')
+          assert.deepStrictEqual(result.data, [])
+          done()
+        })
+      })
+
+      it('should leave a plain {{ }} value bound, never validated as an identifier', (done) => {
+        mustache.render('SELECT {{ data.p }}', { p: 'version()' }, (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.string, 'SELECT $1')
+          assert.deepStrictEqual(result.data, ['version()'])
+          done()
+        })
+      })
+    })
+
+    describe('Loop safety', () => {
+      // SECURITY: the loop reads `<expr>` and builds an index array of its
+      // length. The template `data` is the live request object, so a request
+      // field {"items":{"length":1e9}} would drive the loop a billion times and
+      // exhaust the heap (an uncatchable crash), and a non-array with a
+      // `.length` would silently produce phantom rows. The source must be a real
+      // array; a genuine array stays bounded by the upstream body-size limit.
+
+      /**
+       * Render a loop template over the given attacker payload
+       * @param {*} items Value placed at data.items
+       * @param {Function} cb (err, result)
+       */
+      function renderLoop (items, cb) {
+        mustache.render('{% data.items %}x{{%}}', { items: items }, (err, result) => cb(err, result))
+      }
+
+      it('should reject a non-array object with a forged .length (type confusion)', (done) => {
+        renderLoop({ length: 7 }, (err, result) => {
+          assert.notStrictEqual(err, null, 'a non-array loop source must be rejected')
+          assert.strictEqual(/must be an array/.test(err.toString()), true, err && err.toString())
+          done()
+        })
+      })
+
+      it('should reject a huge forged .length before allocating anything', (done) => {
+        renderLoop({ length: 1e9 }, (err, result) => {
+          assert.notStrictEqual(err, null, 'a forged billion-length must be rejected instantly')
+          assert.strictEqual(result, undefined)
+          done()
+        })
+      })
+
+      it('should still loop over a real array', (done) => {
+        renderLoop(new Array(500).fill(0), (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.string.length, 500)
+          done()
+        })
+      })
+
+      it('should loop zero times over an empty array', (done) => {
+        renderLoop([], (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.string, '')
+          done()
+        })
+      })
+
+      it('should still report the original error for a missing loop source', (done) => {
+        renderLoop(undefined, (err, result) => {
+          assert.notStrictEqual(err, null)
+          assert.strictEqual(/is undefined/.test(err.toString()), true, err && err.toString())
+          done()
+        })
+      })
+    })
+
+    describe('Eval boundary', () => {
+      // A template is a trust boundary, by design: expressions are resolved with
+      // eval() in the module closure, so a template that an attacker could
+      // author would be RCE. On shipped paths templates are developer-authored
+      // and only request DATA (never the template text) is attacker-controlled,
+      // and that data flows in as bound $N parameters. These tests pin both
+      // halves so a regression is visible.
+
+      it('should resolve template expressions with host scope (templates are code)', (done) => {
+        // If the engine is ever hardened to resolve paths without eval, flip
+        // this to assert the globals are NOT reachable.
+        mustache.render('{{ process.pid }}|{{ typeof require }}', {}, (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.data[0], process.pid, 'process reachable from template eval')
+          assert.strictEqual(result.data[1], 'function', 'require reachable from template eval')
+          done()
+        })
+      })
+
+      it('should bind request-supplied values as parameters, never execute them', (done) => {
+        // The attacker controls the DATA, not the template: a value that looks
+        // like code becomes a $N placeholder, pushed verbatim into the param
+        // array — Postgres never parses it as SQL.
+        mustache.render('SELECT {{ data.evil }}', { evil: "'); DROP TABLE users; --" }, (err, result) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(result.string, 'SELECT $1', 'the value is parameterized, not concatenated')
+          assert.strictEqual(result.data[0], "'); DROP TABLE users; --", 'and passed verbatim as a bound param')
+          done()
+        })
+      })
     })
 
     describe('Print', () => {

@@ -1042,4 +1042,128 @@ describe('A log file that cannot be written', () => {
       assert.doesNotThrow(() => logger._stop(done))
     }, 150)
   })
+
+  describe('URL redaction in request logs', () => {
+    // SECURITY: the request log line printed req.url raw, so a secret passed
+    // as ?token=.../?code=... (OAuth codes, reset/invite tokens) landed in the
+    // log file in the clear. Sensitive query values are now redacted.
+
+    it('should leave a URL with no query string untouched', () => {
+      assert.strictEqual(logger._redactUrl('/api/users'), '/api/users')
+      assert.strictEqual(logger._redactUrl('/api/users/42'), '/api/users/42')
+    })
+
+    it('should redact the value of a sensitive query parameter', () => {
+      assert.strictEqual(logger._redactUrl('/api/auth/callback?code=SECRET123'), '/api/auth/callback?code=[redacted]')
+      assert.strictEqual(logger._redactUrl('/reset?token=abc.def.ghi'), '/reset?token=[redacted]')
+      assert.strictEqual(logger._redactUrl('/x?api_key=live_pk_9999'), '/x?api_key=[redacted]')
+    })
+
+    it('should redact regardless of parameter name case', () => {
+      assert.strictEqual(logger._redactUrl('/x?Token=abc'), '/x?Token=[redacted]')
+      assert.strictEqual(logger._redactUrl('/x?ACCESS_TOKEN=abc'), '/x?ACCESS_TOKEN=[redacted]')
+    })
+
+    it('should keep non-sensitive parameters and redact only the secret one', () => {
+      assert.strictEqual(
+        logger._redactUrl('/api/logs?page=2&token=SECRET&size=50'),
+        '/api/logs?page=2&token=[redacted]&size=50'
+      )
+    })
+
+    it('should not leak a secret through a secondary occurrence', () => {
+      const _redacted = logger._redactUrl('/oauth?state=xyz&code=AUTHCODE&scope=read')
+
+      assert.strictEqual(/AUTHCODE/.test(_redacted), false, 'the code must never survive redaction')
+      assert.strictEqual(/xyz/.test(_redacted), false, 'state is sensitive too')
+      assert.strictEqual(/scope=read/.test(_redacted), true, 'a harmless param is kept')
+    })
+
+    it('should cope with a valueless or malformed query', () => {
+      assert.strictEqual(logger._redactUrl('/x?token'), '/x?token')
+      assert.strictEqual(logger._redactUrl('/x?token='), '/x?token=[redacted]')
+      assert.strictEqual(logger._redactUrl('/x?'), '/x?')
+    })
+
+    it('should log whole query strings by default (redaction is opt-in)', (done) => {
+      const _logFilePath = path.join(__dirname, 'datasets', 'myApp', 'server', 'logs', '08-01-2019.log')
+
+      if (fs.existsSync(_logFilePath)) {
+        fs.unlinkSync(_logFilePath)
+      }
+
+      mockdate.set(new Date('08/01/2019'))
+      delete process.env.APP_LOG_REDACT_QUERY
+      logger.initLogger('prod')
+
+      const _mw = logger._logMiddleware()
+      const _req = { method: 'GET', url: '/api/auth/callback?code=VISIBLE123' }
+      const _res = { statusCode: 200, on: (event, cb) => { if (event === 'finish') _res._finish = cb } }
+
+      _mw(_req, _res, () => {})
+      _res._finish()
+
+      logger._stop(() => {
+        const _content = fs.readFileSync(_logFilePath, 'utf8')
+
+        // Off by default: the whole query is kept, easier to debug
+        assert.strictEqual(_content.includes('code=VISIBLE123'), true, _content)
+        mockdate.reset()
+
+        if (fs.existsSync(_logFilePath)) {
+          fs.unlinkSync(_logFilePath)
+        }
+
+        done()
+      })
+    })
+
+    it('should not redact by default when the toggle is unset', () => {
+      delete process.env.APP_LOG_REDACT_QUERY
+      assert.strictEqual(logger._mustRedactQuery(), false)
+    })
+
+    it('should honor APP_LOG_REDACT_QUERY from the environment', () => {
+      process.env.APP_LOG_REDACT_QUERY = 'true'
+      assert.strictEqual(logger._mustRedactQuery(), true)
+      process.env.APP_LOG_REDACT_QUERY = 'false'
+      assert.strictEqual(logger._mustRedactQuery(), false)
+      delete process.env.APP_LOG_REDACT_QUERY
+    })
+
+    it('should redact inside the request log line when APP_LOG_REDACT_QUERY=true', (done) => {
+      const _logFilePath = path.join(__dirname, 'datasets', 'myApp', 'server', 'logs', '08-01-2019.log')
+
+      if (fs.existsSync(_logFilePath)) {
+        fs.unlinkSync(_logFilePath)
+      }
+
+      mockdate.set(new Date('08/01/2019'))
+      process.env.APP_LOG_REDACT_QUERY = 'true'
+      logger.initLogger('prod')
+
+      const _mw = logger._logMiddleware()
+      const _req = { method: 'GET', url: '/api/auth/callback?code=TOPSECRET&state=abc' }
+      const _res = { statusCode: 200, on: (event, cb) => { if (event === 'finish') _res._finish = cb } }
+
+      _mw(_req, _res, () => {})
+      _res._finish()
+
+      logger._stop(() => {
+        const _content = fs.readFileSync(_logFilePath, 'utf8')
+
+        assert.strictEqual(/TOPSECRET/.test(_content), false, 'the OAuth code must not reach the log file')
+        assert.strictEqual(_content.includes('code=[redacted]'), true, _content)
+
+        delete process.env.APP_LOG_REDACT_QUERY
+        mockdate.reset()
+
+        if (fs.existsSync(_logFilePath)) {
+          fs.unlinkSync(_logFilePath)
+        }
+
+        done()
+      })
+    })
+  })
 })

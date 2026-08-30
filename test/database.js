@@ -3,6 +3,7 @@ const assert = require('assert')
 const path = require('path')
 const fs = require('fs')
 const logger = require('../lib/logger')
+const mustache = require('../lib/mustache')
 
 const host = 'localhost'
 const password = 'password'
@@ -126,6 +127,42 @@ describe('Database', function () {
         })
       })
     })
+
+    it('should apply the timeout to every pooled connection, not just the first', (done) => {
+      // SECURITY: a session-scoped `SET statement_timeout` on one client left
+      // connections created lazily under load with no limit — the query-DoS
+      // defence was absent on them. The timeout is now a pool option pg
+      // applies to every backend. Hold several connections open at once
+      // (pg_sleep keeps each busy) and confirm each fresh backend has it.
+      db.init({
+        user,
+        host,
+        database,
+        password,
+        port,
+        timeout: 7000
+      }, (err) => {
+        assert.strictEqual(err, null)
+
+        const _pids = new Set()
+        let _remaining = 6
+
+        for (let i = 0; i < 6; i++) {
+          // pg_sleep forces the pool to open distinct concurrent backends
+          db.query("SELECT pg_backend_pid() AS pid, current_setting('statement_timeout') AS t, pg_sleep(0.15);", (err, res, rows) => {
+            assert.strictEqual(err, null, err && err.toString())
+            assert.strictEqual(rows[0].t, '7s', `a fresh backend (pid ${rows[0].pid}) is missing the timeout`)
+            _pids.add(rows[0].pid)
+            _remaining -= 1
+
+            if (_remaining === 0) {
+              assert.strictEqual(_pids.size > 1, true, 'the test must exercise more than one backend')
+              done()
+            }
+          })
+        }
+      })
+    }).timeout(20000)
   })
 
   describe('Register SQL files', () => {
@@ -317,6 +354,27 @@ describe('Database', function () {
     it('should execute a SQL query with promise', async () => {
       let { rows } = await db.query('SELECT 1 AS number;')
       assert.strictEqual(rows[0].number, 1)
+    })
+
+    // SECURITY: end to end, a `:hard` injection payload must never reach the
+    // database, while a legitimate identifier paste still runs. The unit-level
+    // validation lives in test/mustache.js; this is the integration proof.
+    it('should stop a :hard injection payload from reaching the database', (done) => {
+      mustache.render('SELECT {{ data.p:hard }} AS leaked', { p: 'version()' }, (err, rendered) => {
+        assert.notStrictEqual(err, null, 'version() must be rejected at render time')
+        assert.strictEqual(rendered, undefined, 'no SQL is built for an injection payload')
+
+        mustache.render('SELECT 1 AS {{ data.p:hard }}', { p: 'my_alias' }, (err, ok) => {
+          assert.strictEqual(err, null, err && err.toString())
+          assert.strictEqual(ok.string, 'SELECT 1 AS my_alias')
+
+          db.query(ok.string, ok.data, (err, res, rows) => {
+            assert.strictEqual(err, null, err && err.toString())
+            assert.strictEqual(rows[0].my_alias, 1, 'a legitimate identifier paste still works end to end')
+            done()
+          })
+        })
+      })
     })
 
     it('should return an error', (done) => {

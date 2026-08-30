@@ -26,9 +26,9 @@ _cronList['myCron'].cron.status      // before: 'scheduled' | 'stoped' | undefin
 _cronList['myCron'].cron.getStatus() // after:  'idle' | 'running' | 'stopped' | 'destroyed'
 ```
 
-**3. express replaced by restana + `lib/expressCompat.js`** — application code is unchanged: `res.status/send/json/sendStatus/set/get/type/location/redirect/cookie/sendFile/locals` and `req.get/accepts*/is/path/protocol/secure/hostname/fresh/stale/query` are all provided, `ETag` and `304` included. `hearthjs.express` still returns `json()`, `urlencoded()`, `raw()`, `text()` and `static()`.
+**3. express replaced by restana + `lib/expressCompat.js`** — application code is unchanged: `res.status/send/json/sendStatus/set/get/type/location/redirect/cookie/sendFile/locals` and `req.get/accepts*/is/path/protocol/secure/hostname/fresh/stale/query/ip` are all provided, `ETag` and `304` included. `hearthjs.express` still returns `json()`, `urlencoded()`, `raw()`, `text()` and `static()`.
 
-Two deliberate differences, both safer: `X-Forwarded-*` is ignored unless `APP_TRUST_PROXY` is true (a client could otherwise spoof `req.protocol`), and `res.redirect()` no longer emits a clickable `<a href>`.
+Three deliberate differences, all safer: `X-Forwarded-*` is ignored unless `APP_TRUST_PROXY` is true (a client could otherwise spoof `req.protocol`), `req.ip` returns the **rightmost** `X-Forwarded-For` hop — the one your proxy appended — instead of express' client-supplied leftmost, and `res.redirect()` no longer emits a clickable `<a href>`. Trust-proxy assumes a **single appending reverse proxy**: with two trusted layers (CDN in front of nginx), the rightmost hop is your own LB's address — resolve the client IP into `X-Forwarded-For`'s last position at the innermost proxy before hearthjs.
 
 **4. `socket.io` and `mocha` are now optional peer dependencies** — `npm install socket.io` if you set `startSocketServer: true`, `mocha` if you use `hearthjs test`. Together they were 8.7 MB shipped to every deployment.
 
@@ -105,6 +105,16 @@ It applies only when `JOURNAL_STREAM` is set, which systemd does when it collect
 | `helper.assertTableOfObject()` | an order-insensitive array assertion for test suites |
 | `helper.handlePromiseError()` | wrapped a promise into a `[err, data]` tuple |
 
+#### ✨ Built-in rate limiter
+
+Opt-in, off by default — in-memory token bucket, no external store. Usage in the README, full design in `rate-limit-specification.md`.
+
+- Global limiter on every route with `APP_RATE_LIMIT=true` (+ `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_WINDOW`, `APP_RATE_LIMIT_MAX_KEYS`, `APP_RATE_LIMIT_SKIP`, `APP_RATE_LIMIT_HEADERS`). Runs before cookie and body parsing.
+- Per-route limits with the new `rateLimit` schema key: an inline `{ max, window, key, scope, dryRun, onLimit, message, maxKeys }` object, or the name of a profile declared with `hearthjs.rateLimit.define(name, options)` in `beforeInit`. `scope: 'shared'` (default) makes routes on the same profile share one budget per key; the limiter runs before addons and user middleware. A rejected request gets `429` + `Retry-After` with the standard response body.
+- `hearthjs.rateLimit.configure({ key, skip, onLimit })` customizes the global limiter; `dryRun: true` logs would-be rejections without blocking, for a safe rollout.
+- A route referencing an unknown profile is reported at startup and not served: a broken limit never ships a route unlimited.
+- Hardened by design: the 429 carries `Retry-After` and `Cache-Control: no-store` with a pre-serialized body; above `maxKeys`, new keys are limited collectively through a ring of 256 shared buckets (bounded memory, no service-wide lockout); skip prefixes match the decoded path on segment boundaries; key generators are synchronous — one that throws or returns no string falls back to the client address with a throttled warning, as does a throwing `onLimit`; logged keys are stripped of control characters and cut to 8 characters; unrecognized or invalid `APP_RATE_LIMIT*` values warn instead of being silently ignored or truncated (`1e9` parses as a billion, not `1`).
+
 #### 🔥 Performance
 
 **SQL templates were quadratic in the number of rendered rows.** A template looping over a data array rebuilt its parameter accumulator with `concat` on every iteration, so building the `$1..$N` list cost O(n²). 100 000 items took
@@ -139,9 +149,13 @@ It applies only when `JOURNAL_STREAM` is set, which systemd does when it collect
 - **Names colliding with `Object.prototype`.** A column named `constructor` broke the row mapper and `db.exec('toString')` killed the process. The lookup objects have a null prototype now.
 - **A header holding a newline** threw `ERR_INVALID_CHAR` from a callback. Dropped and logged instead. Nothing was injectable either way.
 - **`SET statement_timeout` and `TRUNCATE` built as strings** — the timeout is forced to an integer, and `datasets.clean()` doubles quotes in table names.
+- **`statement_timeout` reached only one pooled connection.** A session-scoped `SET` on the first client left connections opened later under load with no limit, so an expensive query on a fresh backend ran unbounded — the query-DoS defence was effectively absent. It is a pool option now, applied by pg to every backend. `connectionTimeoutMillis` is set too, so a saturated pool fails a request fast instead of hanging forever.
+- **A forged `.length` in a request could OOM the process.** A mustache loop over a request field read `<expr>.length` and eagerly built an index array that size, with no type check — the request object is the template data, so `{"items":{"length":1e9}}` (a ~20-byte body) crashed the process, and any non-array with a `.length` produced phantom rows. A loop source must now be a real array; a genuine array stays bounded by the body-size limit.
+- **`{{ x:hard }}` no longer concatenates an arbitrary value into SQL.** Unlike `{{ x }}` (bound as `$N`), the `:hard` paste splices its value into the SQL text, so a request-supplied value was SQL injection. `:hard` exists only for dynamic identifiers and `ORDER BY` terms, so the value is now validated as a safe SQL identifier (dotted names, `ASC`/`DESC`, `NULLS FIRST`/`LAST`, comma-separated lists, positional `ORDER BY`) and anything else — quotes, semicolons, parentheses, operators, comments — is rejected before any SQL is built. Legitimate identifier pastes are unchanged.
+- **Optional redaction of secret query parameters in request logs.** The one-line request log prints the URL, so a `?token=`/`?code=` (OAuth codes, reset and invite tokens) reaches the log file in the clear. Set `APP_LOG_REDACT_QUERY=true` to replace the value of sensitive parameter names with `[redacted]` while keeping the path and harmless parameters — recommended in production. Off by default, so whole query strings stay visible for debugging.
 - `APP_SECURITY_HEADERS=true` adds `nosniff`, `X-Frame-Options` and HSTS. Off by default, since an application's own headers must win.
 
-Injection, denial of service, disclosure, traversal, pollution, smuggling and path confusion were each tried against the framework over three rounds. Verified as not vulnerable: SQL templating binds `{{ }}` as parameters, prototype pollution is stripped from both query string and body, `sendFile` refuses `../`, the other validators do not backtrack, cookies serialize byte for byte like express, `qs` caps the query string at 1000 parameters, slowloris does not delay a legitimate request, `Content-Length` + `Transfer-Encoding` is rejected with a `400`, and every path variant tried routes exactly as express does.
+Injection, denial of service, disclosure, traversal, pollution, smuggling and path confusion were each tried against the framework over three rounds. Verified as not vulnerable: SQL templating binds `{{ }}` as parameters and restricts `{{ x:hard }}` to safe identifiers, prototype pollution is stripped from both query string and body, `sendFile` refuses `../`, the other validators do not backtrack, cookies serialize byte for byte like express, `qs` caps the query string at 1000 parameters, slowloris does not delay a legitimate request, `Content-Length` + `Transfer-Encoding` is rejected with a `400`, and every path variant tried routes exactly as express does.
 
 #### 💥 Crash vectors
 
@@ -209,8 +223,8 @@ Dev: `eslint` 5 -> 9 (+ `neostandard`), `sinon` 7 -> 22, `nyc` 14 -> 18, `multer
 
 #### ✅ Tests & tooling
 
-- **554 tests** (was 431), green on Node 26. Full run **38s -> 12s**.
-- New suites: `expressCompat` (25 differential tests running the same handler on express and on restana), `gracefulShutdown`, `crashSafety`, `security`, `asyncSafety`, `performance` (guards the complexity of `sqlToJson`), plus `watch` and `socket`, which had no tests at all.
+- **695 tests** (was 431), green on Node 26. Full run **38s -> 20s**.
+- New suites: `expressCompat` (25 differential tests running the same handler on express and on restana), `gracefulShutdown`, `crashSafety`, `security`, `asyncSafety`, `performance` (guards the complexity of `sqlToJson` and the O(1) hot path of the rate limiter), `rateLimit` (75 tests, driven clock, zero sleeps), plus `watch` and `socket`, which had no tests at all. Security-audit exploit PoCs live alongside the feature they cover (the `:hard` and loop-safety checks in `mustache`, the query-redaction checks in `logger`, the per-connection `statement_timeout` check in `database`).
 - The suite waits on conditions and events instead of sleeping, and stops test servers through the child process handle rather than `process.kill(pid)` — a recycled pid is how a run managed to terminate `npm` itself.
 - `eslint.config.js` added: the project had ESLint dependencies but no committed configuration, so linting never ran.
 - `.github/workflows/ci.yml` added: the suite on Node 26 against PostgreSQL 16, plus lint and `npm audit`. Actions pinned by commit SHA.

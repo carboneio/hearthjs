@@ -7,6 +7,8 @@ const mustache = require('../lib/mustache')
 const validation = require('../lib/validation')
 const expressCompat = require('../lib/expressCompat')
 const mustacheLib = require('../lib/mustache')
+const rateLimit = require('../lib/rateLimit')
+const logger = require('../lib/logger')
 
 /**
  * Performance regression tests. They guard algorithmic complexity and the
@@ -459,6 +461,174 @@ describe('Performance', function () {
 
       assert.strictEqual(ms < 500, true,
         `validating 500 nested items took ${ms.toFixed(1)}ms, expected < 500ms`)
+    })
+  })
+
+  describe('rateLimit', () => {
+    const _originalLog = logger.log
+
+    before(() => {
+      // The rejected path logs (throttled): the file writer must not pollute
+      // the timing
+      logger.log = () => {}
+    })
+
+    after(() => {
+      logger.log = _originalLog
+      rateLimit._reset()
+    })
+
+    it('should consume in O(1) whatever the number of tracked keys', () => {
+      /**
+       * Time 1M consumes spread over `keyCount` existing keys
+       * @param {Number} keyCount Number of distinct keys
+       */
+      function timeAt (keyCount) {
+        const limiter = rateLimit._createLimiter(1e9, 60, 1e9)
+        const keys = Array.from({ length: keyCount }, (_, i) => 'ip-' + i)
+
+        for (let i = 0; i < keyCount; i++) {
+          limiter.consume(keys[i], 0)
+        }
+
+        return bestOf(() => {
+          for (let i = 0; i < 1e6; i++) {
+            limiter.consume(keys[i % keyCount], 1)
+          }
+        }, 3)
+      }
+
+      const smallMs = timeAt(100)
+      const largeMs = timeAt(100000)
+
+      // O(1) stays flat; a scan, sweep or rehash per consume shows up as ~1000x
+      assert.strictEqual(largeMs < smallMs * 5, true,
+        `consume is not O(1): 100 keys ${smallMs.toFixed(1)}ms vs 100k keys ${largeMs.toFixed(1)}ms for 1M ops`)
+    })
+
+    it('should stay under budget on the hot path, allowed and rejected alike', () => {
+      const allowed = rateLimit._createLimiter(1e9, 60, 1000)
+      const allowedMs = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          allowed.consume('k', i * 0.001)
+        }
+      }, 3)
+
+      const rejected = rateLimit._createLimiter(1, 3600, 1000)
+
+      rejected.consume('k', 0)
+
+      const rejectedMs = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          rejected.consume('k', 1)
+        }
+      }, 3)
+
+      // ~10ms each on 2026 hardware; the budget only guards a catastrophic
+      // regression (an accidental Promise, allocation or serialization per op)
+      assert.strictEqual(allowedMs < 200, true, `1M allowed consumes took ${allowedMs.toFixed(1)}ms, expected < 200ms`)
+      assert.strictEqual(rejectedMs < 200, true, `1M rejected consumes took ${rejectedMs.toFixed(1)}ms, expected < 200ms`)
+    })
+
+    it('should scale linearly on unique-key churn across rotations', () => {
+      /**
+       * Insert `count` never-seen keys through rotating windows. A fresh
+       * limiter is built inside each timed run so every run does the real
+       * insertion work, not just refills on an already-populated table.
+       * @param {Number} count Number of unique keys
+       */
+      function timeChurn (count) {
+        return bestOf(() => {
+          const limiter = rateLimit._createLimiter(10, 0.05, 1e9)
+
+          for (let i = 0; i < count; i++) {
+            limiter.consume('key-' + i, i * 0.01)
+          }
+        }, 4)
+      }
+
+      // Warm up so the first real measurement is not paying JIT/allocation
+      // startup that a noisy baseline would otherwise attribute to the small run
+      timeChurn(50000)
+
+      const smallMs = timeChurn(100000)
+      const largeMs = timeChurn(200000)
+
+      // Linear stays near 2x for 2x the keys; quadratic (a rehash or scan per
+      // rotation) shows as ~4x. 3.5x separates them with margin for GC noise.
+      assert.strictEqual(largeMs < smallMs * 3.5, true,
+        `unique-key churn is not linear: 100k keys ${smallMs.toFixed(1)}ms -> 200k keys ${largeMs.toFixed(1)}ms`)
+    })
+
+    it('should keep the middleware allowed path under budget', () => {
+      const middleware = rateLimit._routeMiddleware({ max: 1e9, window: 60 }, 'PERF /allowed')
+      const req = { ip: '203.0.113.7', url: '/api/thing', method: 'GET', headers: {}, socket: { remoteAddress: '203.0.113.7' } }
+      const res = { headers: {}, statusCode: 200, setHeader: function () {}, end: function () {} }
+      const next = () => {}
+
+      const ms = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          middleware(req, res, next)
+        }
+      }, 3)
+
+      // ~40ms measured: the clock read dominates. 400ms only catches a
+      // regression that puts real work back on the allowed path.
+      assert.strictEqual(ms < 400, true, `1M allowed middleware calls took ${ms.toFixed(1)}ms, expected < 400ms`)
+    })
+
+    it('should keep the 429 path cheaper than a serialization per rejection', () => {
+      const middleware = rateLimit._routeMiddleware({ max: 1, window: 3600 }, 'PERF /rejected')
+      const req = { ip: '203.0.113.7', url: '/api/thing', method: 'GET', headers: {}, socket: { remoteAddress: '203.0.113.7' } }
+      const res = { headers: {}, statusCode: 200, setHeader: function () {}, end: function () {} }
+      const next = () => {}
+
+      middleware(req, res, next)
+
+      const ms = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          middleware(req, res, next)
+        }
+      }, 3)
+
+      // The 429 body is pre-serialized: a JSON.stringify per rejection would
+      // sit around 1ms per 1k ops and blow this budget at once
+      assert.strictEqual(ms < 400, true, `1M rejections took ${ms.toFixed(1)}ms, expected < 400ms`)
+    })
+
+    it('should not allocate per request on a skipped path', () => {
+      process.env.APP_RATE_LIMIT = 'true'
+      process.env.APP_RATE_LIMIT_SKIP = '/health,/api/webhooks'
+
+      const middleware = rateLimit._globalMiddleware(null)
+
+      delete process.env.APP_RATE_LIMIT
+      delete process.env.APP_RATE_LIMIT_SKIP
+
+      const req = { ip: '203.0.113.7', url: '/api/webhooks/stripe', method: 'GET', headers: {}, socket: { remoteAddress: '203.0.113.7' } }
+      const res = { headers: {}, statusCode: 200, setHeader: function () {}, end: function () {} }
+      const next = () => {}
+
+      const ms = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          middleware(req, res, next)
+        }
+      }, 3)
+
+      assert.strictEqual(ms < 400, true, `1M skipped calls took ${ms.toFixed(1)}ms, expected < 400ms`)
+      rateLimit._reset()
+    })
+
+    it('should bound the key table by maxKeys whatever the attack cardinality', () => {
+      const limiter = rateLimit._createLimiter(100, 60, 10000)
+
+      // 100k distinct keys in one window: an attacker minting identities
+      for (let i = 0; i < 100000; i++) {
+        limiter.consume('garbage-' + i, 1)
+      }
+
+      assert.strictEqual(limiter.size() <= 10000, true,
+        `the key table holds ${limiter.size()} keys, maxKeys=10000 must cap it`)
     })
   })
 })
