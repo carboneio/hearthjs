@@ -356,6 +356,14 @@ describe('Database', function () {
       assert.strictEqual(rows[0].number, 1)
     })
 
+    it('should identify itself with the default application_name', (done) => {
+      db.query("SELECT current_setting('application_name') AS app;", (err, res, rows) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(rows[0].app, 'hearthjs', 'the application_name reaches Postgres')
+        done()
+      })
+    })
+
     // SECURITY: end to end, a `:hard` injection payload must never reach the
     // database, while a legitimate identifier paste still runs. The unit-level
     // validation lives in test/mustache.js; this is the integration proof.
@@ -410,5 +418,206 @@ describe('Database', function () {
         })
       }
     }).timeout(3000)
+  })
+
+  describe('connection-level detection', () => {
+    it('should flag connection-level errors (socket/DNS + pg class 08 / 57P0x)', () => {
+      const _codes = [
+        'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ECONNABORTED',
+        'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'ENOTFOUND', 'EAI_AGAIN',
+        '08000', '08001', '08003', '08004', '08006', '08007', '08P01',
+        '57P01', '57P02', '57P03', '57P05'
+      ]
+
+      for (const _code of _codes) {
+        assert.strictEqual(db._isConnectionError({ code: _code }), true, _code)
+      }
+    })
+
+    it('should flag the codeless messages node-postgres emits on a real drop', () => {
+      assert.strictEqual(db._isConnectionError({ message: 'Connection terminated unexpectedly' }), true)
+      assert.strictEqual(db._isConnectionError({ message: 'Client has encountered a connection error and is not queryable' }), true)
+    })
+
+    it('should NOT flag intentional closes or timeouts (regression)', () => {
+      // These node-postgres messages must never be treated as a retryable drop:
+      // an intentional client.end(), the pool connect-timeout, the pool acquire
+      // timeout, and a deliberately closed client.
+      const _notConnection = [
+        'Connection terminated',
+        'Connection terminated due to connection timeout',
+        'timeout exceeded when trying to connect',
+        'Client was closed and is not queryable',
+        'Query read timeout'
+      ]
+
+      for (const _message of _notConnection) {
+        assert.strictEqual(db._isConnectionError({ message: _message }), false, _message)
+      }
+    })
+
+    it('should not flag query-level errors', () => {
+      // query_canceled/statement_timeout, deadlock, unique violation, undefined
+      // table, database_dropped (futile to retry), too_many_connections
+      for (const _code of ['57014', '40P01', '23505', '42P01', '57P04', '53300']) {
+        assert.strictEqual(db._isConnectionError({ code: _code }), false, _code)
+      }
+
+      assert.strictEqual(db._isConnectionError(null), false)
+      assert.strictEqual(db._isConnectionError(undefined), false)
+      assert.strictEqual(db._isConnectionError({ message: 'duplicate key value' }), false)
+    })
+
+    it('should treat only plain SELECTs as idempotent reads', () => {
+      assert.strictEqual(db._isIdempotentRead('SELECT 1'), true)
+      assert.strictEqual(db._isIdempotentRead('  select * from t'), true)
+      assert.strictEqual(db._isIdempotentRead('-- a comment\nSELECT 1'), true)
+      assert.strictEqual(db._isIdempotentRead('/* x */ SELECT 1'), true)
+    })
+
+    it('should never retry writes, CTEs, locking reads or SELECT INTO', () => {
+      const _unsafe = [
+        'UPDATE t SET x = 1',
+        'INSERT INTO t VALUES (1)',
+        'DELETE FROM t',
+        'WITH x AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM x',
+        'SELECT * FROM t FOR UPDATE',
+        'SELECT * FROM t FOR SHARE',
+        'SELECT * INTO t2 FROM t',
+        '',
+        42
+      ]
+
+      for (const _q of _unsafe) {
+        assert.strictEqual(db._isIdempotentRead(_q), false, JSON.stringify(_q))
+      }
+    })
+  })
+
+  describe('pool option parsing', () => {
+    afterEach(() => {
+      delete process.env.APP_DATABASE_POOL_MAX
+    })
+
+    it('should use the default when nothing is set', () => {
+      assert.strictEqual(db._poolInt('APP_DATABASE_POOL_MAX', undefined, 10, 1), 10)
+    })
+
+    it('should take the config value, then let the env override it', () => {
+      assert.strictEqual(db._poolInt('APP_DATABASE_POOL_MAX', 25, 10, 1), 25)
+
+      process.env.APP_DATABASE_POOL_MAX = '40'
+      assert.strictEqual(db._poolInt('APP_DATABASE_POOL_MAX', 25, 10, 1), 40, 'env wins over config')
+    })
+
+    it('should fall back to the default on an invalid or below-min value', () => {
+      assert.strictEqual(db._poolInt('APP_DATABASE_POOL_MAX', 'lots', 10, 1), 10)
+      assert.strictEqual(db._poolInt('APP_DATABASE_POOL_MAX', 0, 10, 1), 10, '0 is below the min of 1')
+      assert.strictEqual(db._poolInt('APP_DATABASE_CONNECTION_TIMEOUT', 0, 10000, 0), 0, '0 is allowed when min is 0')
+    })
+  })
+
+  describe('connection-level retry', () => {
+    let _savedPool = null
+    const _originalLog = logger.log
+
+    beforeEach(() => {
+      _savedPool = db._pool
+      logger.log = () => {}
+    })
+
+    afterEach(() => {
+      db._pool = _savedPool
+      logger.log = _originalLog
+    })
+
+    /**
+     * A pool whose connect() yields, per call, the query behaviour at that index
+     * @param {Array} steps Each { connectErr } or { queryErr, rows }
+     */
+    function fakePool (steps) {
+      let _i = 0
+
+      return {
+        connects: 0,
+        connect: function (cb) {
+          this.connects += 1
+          const _step = steps[_i++] || steps[steps.length - 1]
+
+          if (_step.connectErr) {
+            return cb(_step.connectErr)
+          }
+
+          const _client = {
+            query: (q, p, qcb) => qcb(_step.queryErr ?? null, { rows: _step.rows ?? [] })
+          }
+
+          return cb(null, _client, () => {})
+        }
+      }
+    }
+
+    it('should retry an idempotent read once on a mid-query connection error', (done) => {
+      const _pool = fakePool([
+        { queryErr: { code: 'ECONNRESET' } },
+        { rows: [{ n: 1 }] }
+      ])
+      db._pool = _pool
+
+      db.query('SELECT 1 AS n', (err, res, rows) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(rows[0].n, 1)
+        assert.strictEqual(_pool.connects, 2, 'the read ran again on a fresh connection')
+        done()
+      })
+    })
+
+    it('should NOT retry a write on a mid-query connection error', (done) => {
+      const _pool = fakePool([{ queryErr: { code: 'ECONNRESET' } }])
+      db._pool = _pool
+
+      db.query('UPDATE t SET x = 1', (err) => {
+        assert.strictEqual(err.code, 'ECONNRESET')
+        assert.strictEqual(_pool.connects, 1, 'a write is never replayed')
+        done()
+      })
+    })
+
+    it('should NOT retry a non-connection error', (done) => {
+      const _pool = fakePool([{ queryErr: { code: '23505' } }])
+      db._pool = _pool
+
+      db.query('SELECT 1', (err) => {
+        assert.strictEqual(err.code, '23505')
+        assert.strictEqual(_pool.connects, 1)
+        done()
+      })
+    })
+
+    it('should retry any query once when connect() itself fails', (done) => {
+      // connect failed, so the query never ran — even a write is safe to retry
+      const _pool = fakePool([
+        { connectErr: { code: 'ECONNREFUSED' } },
+        { rows: [] }
+      ])
+      db._pool = _pool
+
+      db.query('UPDATE t SET x = 1', (err) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(_pool.connects, 2)
+        done()
+      })
+    })
+
+    it('should give up after a single retry', (done) => {
+      const _pool = fakePool([{ queryErr: { code: 'ECONNRESET' } }])
+      db._pool = _pool
+
+      db.query('SELECT 1', (err) => {
+        assert.strictEqual(err.code, 'ECONNRESET')
+        assert.strictEqual(_pool.connects, 2, 'initial attempt plus one retry, then give up')
+        done()
+      })
+    })
   })
 })
