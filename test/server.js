@@ -9,6 +9,7 @@ const net = require('net')
 const server = require('../lib/server')
 const { spawn } = require('child_process')
 const logger = require('../lib/logger')
+const expressCompat = require('../lib/expressCompat')
 
 let program = null
 
@@ -431,7 +432,7 @@ describe('Server', () => {
 
       it('should ignore a status outside the error range, like express does', () => {
         for (const _status of [200, 302, 399, 600, 1000]) {
-          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 400, String(_status))
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 500, String(_status))
         }
       })
 
@@ -439,24 +440,26 @@ describe('Server', () => {
         // res.end() raises ERR_HTTP_INVALID_STATUS_CODE below 100, above 999 or
         // on a non integer, from a place where nothing catches it
         for (const _status of [0, -1, 1.5, 99, 1000, NaN, Infinity]) {
-          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 400, String(_status))
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: _status })), 500, String(_status))
         }
 
         for (const _code of [0, -1, 1.5, 99, 1000, NaN, Infinity]) {
-          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: _code })), 400, String(_code))
+          assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: _code })), 500, String(_code))
         }
       })
 
       it('should ignore a non numeric code, which is what node errors carry', () => {
-        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 'ENOENT' })), 400)
-        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: '413' })), 400)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { code: 'ENOENT' })), 500)
+        assert.strictEqual(app.server._statusForError(Object.assign(new Error('x'), { status: '413' })), 500)
       })
 
-      it('should answer 400 when there is nothing to read', () => {
-        assert.strictEqual(app.server._statusForError(new Error('x')), 400)
+      it('should answer 500 for a fault and 400 for a refusal when there is nothing to read', () => {
+        // a 4xx would blame the caller for a server bug, and would keep it out
+        // of everything that watches the 5xx rate
+        assert.strictEqual(app.server._statusForError(new Error('x')), 500)
+        assert.strictEqual(app.server._statusForError(null), 500)
+        assert.strictEqual(app.server._statusForError(undefined), 500)
         assert.strictEqual(app.server._statusForError('a refusal written for the caller'), 400)
-        assert.strictEqual(app.server._statusForError(null), 400)
-        assert.strictEqual(app.server._statusForError(undefined), 400)
       })
 
       it('should never return a status res.end would throw on', (done) => {
@@ -478,6 +481,39 @@ describe('Server', () => {
             }).on('error', (err) => { assert.strictEqual(err, null, `${JSON.stringify(_shape)} -> ${_status}`) })
           })
         }
+      })
+
+      it('should answer 500 over HTTP for a thrown error, and 400 for a refusal', (done) => {
+        const restana = require('restana')
+        // wired exactly like _initServer, so the status the client reads is the one shipped
+        const _service = restana({
+          errorHandler: (err, req, res) => server._handleError(err, req, res),
+          securityHeaders: false,
+          prioRequestsProcessing: false
+        })
+
+        _service.use(expressCompat())
+        _service.get('/fault', () => { throw new Error('the database exploded') })
+        _service.get('/refusal', (req, res, next) => next('you may not do that'))
+
+        const _probe = http.createServer(_service)
+
+        _probe.listen(0, () => {
+          const _port = _probe.address().port
+          let _remaining = 2
+
+          for (const [_path, _status] of [['/fault', 500], ['/refusal', 400]]) {
+            rock.get({ url: `http://localhost:${_port}${_path}` }, (err, response, body) => {
+              assert.strictEqual(err, null)
+              assert.strictEqual(response.statusCode, _status, `${_path} answered ${response.statusCode}: ${body}`)
+
+              if (--_remaining === 0) {
+                _probe.close()
+                done()
+              }
+            })
+          }
+        })
       })
     })
 

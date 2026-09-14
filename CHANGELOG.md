@@ -26,7 +26,17 @@ Everything on the JSON path is untouched: `json`, `html`, `text`, `urlencoded`, 
 - `.wav` answers `audio/wav` instead of `audio/wave`; `.es` and `.hsj2` are no longer known. 61 extensions are newly known.
 - `res.set('content-type', 'html')` answered `html; charset=utf-8`, which was wrong, and now answers `text/html; charset=utf-8`.
 
-**3. `send` 1 and `serve-static` 2**
+**3. A server fault answers 500, not 400**
+
+An error with no usable `code`/`status`/`statusCode` used to answer `400`. A string passed to `next()` is a refusal written for the caller and still answers `400`; anything else is a server fault and now answers `500`, like express. A `4xx` blamed the caller for a server bug and kept the failure out of everything watching the 5xx rate — a load balancer's counters, an APM, an uptime check. `server._isFault` owns the distinction, which `api` already made for the log level and for what the client is told.
+
+**4. A schema holding an unknown key no longer serves its route**
+
+Addons are the only authentication hearthjs offers, and a schema opts into one by naming it. An unrecognised key used to be ignored in silence, so `needAuthentcation` was not a mistake to hearthjs — it was simply no addon, and the route shipped open, indistinguishable from one that is public on purpose. The same typo on `rateLimit` shipped it unlimited.
+
+A schema key that is neither an option hearthjs reads (`after`, `before`, `function`, `in`, `middleware`, `out`, `query`, `rateLimit`, `successMsg`) nor the `schemaKeyName` of a registered addon now logs an error at startup and drops the route, which answers 404. That is the treatment a broken `rateLimit` profile already got, for the same reason: a route that cannot be protected must not be served.
+
+**5. `send` 1 and `serve-static` 2**
 
 `res.sendFile` and `express.static` write `charset=utf-8` where they wrote `charset=UTF-8`; the parameter is case insensitive. `serveStatic.mime` and the deprecated `hidden` option are gone from `hearthjs.express.static`.
 
@@ -48,6 +58,13 @@ One divergence had to be stated rather than followed: express 5 defaults `query 
 | serve-static | 1.16.3 | 2.2.1 |
 | type-is | 1.6.18 | 2.1.0 |
 
+#### 🔒 What reaches the logs
+
+Both of these change what a log pipeline receives, not the HTTP API.
+
+- A failing query no longer logs `err.detail`. Postgres puts the offending row's values there — `Key (email)=(victim@example.com) already exists.` — so every constraint violation shipped user data to wherever the logs go, which is rarely held as tightly as the database. The constraint name is already part of the message, and `hint` is guidance rather than data, so both stay.
+- A pool error logs its message. `JSON.stringify` drops `message` and `stack`, which are not enumerable, so a dropped connection — the common case — used to log as `{}`. It now reads `Database pool error: Error: Connection terminated unexpectedly`, and a server-sent error adds its SQLSTATE.
+
 #### 🔀 Unchanged on purpose
 
 `body-parser` 2 dropped two defaults the express 4 line guaranteed, and application code depends on both. `lib/middlewares.js` now wraps the four parsers to restore them, so `hearthjs.express` behaves as it did:
@@ -63,6 +80,16 @@ One divergence had to be stated rather than followed: express 5 defaults `query 
 - `PATH_DESCRIPTOR` was dead: restana sets `req.path` before any middleware runs, so the fallback never fired. Checked across a matched route, a 404, `OPTIONS`, `HEAD`, a malformed escape, a mounted sub-router and a double slash.
 - `getHeader` folded into `req.get`, three JSDoc blocks removed (two of which documented the wrong function), and `Object.hasOwn` replaces `hasOwnProperty.call`.
 - `res.setHeader` no longer builds its error message on the nominal path, where `send` calls it six to eight times per file served.
+
+#### 🧭 Migrating
+
+1. **Search for the removed signatures.** `res.send(<number>)`, any `res.send` or `res.json` with two arguments, and `res.redirect(url, status)`. They fail silently: `res.send(404)` answers `200` with the body `404`. `res.redirect(301, '/a')` is unchanged.
+2. **Expect 5xx where you had 4xx.** A handler fault now answers `500`. Anything alerting on a 5xx rate — a load balancer, an APM, an uptime check — starts reporting bugs that were invisible before. That is the point, but size the thresholds for it. Client code branching on `400` for a server failure needs to read `500` too. A refusal written for the caller, `next('some message')`, still answers `400`.
+3. **Check what you serve.** `.js` and `.mjs` answer `text/javascript`, `.wav` answers `audio/wav`, and `res.sendFile` and `express.static` write `charset=utf-8` in lower case. A test comparing a content type exactly has to follow.
+4. **Boot once and read the startup log.** A schema key that is not recognised now drops its route. If a route answers 404 that used to answer, the log names the method, the route and the key — and that route was running without whatever the key was meant to turn on.
+5. **`serveStatic.mime` and the `hidden` option are gone** from `hearthjs.express.static`. Use `dotfiles` in place of `hidden`.
+6. **Nothing to do for `req.body`.** It is still `{}` when nothing was parsed, and `urlencoded()` still defaults to `extended: true`. Both were restored on purpose.
+7. **Update anything that parses the two log lines above**, and check that `APP_LOG_REDACT_QUERY` is on wherever the logs leave the host: without it a URL reaches the logs whole, and an emailed link carries its token in the query string.
 
 ### v5.1.0
 

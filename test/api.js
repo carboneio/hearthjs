@@ -148,6 +148,7 @@ describe('Refusal messages sent to the caller', () => {
 describe('Route declaration failures', () => {
   const api = require('../lib/api')
   const server = require('../lib/server')
+  const rateLimit = require('../lib/rateLimit')
 
   let _logged = []
   let _readyCalls = 0
@@ -155,6 +156,8 @@ describe('Route declaration failures', () => {
   let _realReady = null
   let _realDeclared = 0
   let _realServed = 0
+  let _realApp = null
+  let _realAddons = null
 
   beforeEach(() => {
     _logged = []
@@ -163,6 +166,9 @@ describe('Route declaration failures', () => {
     _realReady = server._setApiReady
     _realDeclared = api._nbRouteDeclared
     _realServed = api._nbRouteServed
+    _realApp = server._app
+    _realAddons = server._addons
+    server._app = { get: () => {} }
     logger.log = (msg, level) => _logged.push({ msg: String(msg), level })
     server._setApiReady = () => { _readyCalls++ }
     api._reset()
@@ -174,6 +180,8 @@ describe('Route declaration failures', () => {
 
   afterEach(() => {
     logger.log = _realLog
+    server._app = _realApp
+    server._addons = _realAddons
     server._setApiReady = _realReady
     api._reset()
     api._nbRouteDeclared = _realDeclared
@@ -224,5 +232,54 @@ describe('Route declaration failures', () => {
 
     // The counters still agree, which is what _checkApiIsReady waits on
     assert.strictEqual(api._nbRouteDeclared, api._nbRouteServed)
+  })
+
+  it('should drop a route whose schema holds an unknown key, never ship it unguarded', () => {
+    // A mistyped addon name is silently no addon at all, and an authentication
+    // addon is the only thing standing between the route and an anonymous caller
+    api._apiList.myApi.schemas.guarded = { needAuthentcation: true, before: (req, res, next) => next() }
+    api._addRoute('GET', '/guarded', 'guarded')
+
+    assert.strictEqual(_logged[0].level, 'error')
+    assert.strictEqual(_logged[0].msg.includes('unknown schema key needAuthentcation'), true, _logged[0].msg)
+    assert.strictEqual(api._nbRouteDeclared, 0, 'the route must not be counted')
+    assert.strictEqual(api._nbRouteDeclared, api._nbRouteServed, 'startup must not hang')
+    assert.strictEqual(_readyCalls, 1, 'readiness must be re-evaluated')
+  })
+
+  it('should name every unknown key, so one run fixes them all', () => {
+    api._apiList.myApi.schemas.two = { rateLimt: 'write', successMg: 'ok', before: (req, res, next) => next() }
+    api._addRoute('GET', '/two', 'two')
+
+    assert.strictEqual(_logged[0].msg.includes('rateLimt, successMg'), true, _logged[0].msg)
+  })
+
+  it('should accept every key hearthjs itself reads', () => {
+    // Guards the other way round: an incomplete allow-list would drop working routes
+    rateLimit.define('declarationTest', { max: 10, window: 60 })
+    api._apiList.myApi.schemas.full = {
+      in: {},
+      out: {},
+      query: 'someQuery',
+      before: (req, res, next) => next(),
+      after: (req, res, next) => next(),
+      middleware: [],
+      function: (req, res) => res.end(),
+      rateLimit: 'declarationTest',
+      successMsg: 'done'
+    }
+    api._addRoute('GET', '/full', 'full')
+
+    assert.strictEqual(_logged.length, 0, JSON.stringify(_logged))
+    assert.strictEqual(api._nbRouteDeclared, 1)
+  })
+
+  it('should accept the schemaKeyName of a registered addon', () => {
+    server._addons = [{ schemaKeyName: 'roles' }]
+    api._apiList.myApi.schemas.withAddon = { roles: ['admin'], before: (req, res, next) => next() }
+    api._addRoute('GET', '/with-addon', 'withAddon')
+
+    assert.strictEqual(_logged.length, 0, JSON.stringify(_logged))
+    assert.strictEqual(api._nbRouteDeclared, 1)
   })
 })
