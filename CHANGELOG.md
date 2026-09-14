@@ -34,11 +34,21 @@ An error with no usable `code`/`status`/`statusCode` used to answer `400`. A str
 
 Addons are the only authentication hearthjs offers, and a schema opts into one by naming it. An unrecognised key used to be ignored in silence, so `needAuthentcation` was not a mistake to hearthjs — it was simply no addon, and the route shipped open, indistinguishable from one that is public on purpose. The same typo on `rateLimit` shipped it unlimited.
 
-A schema key that is neither an option hearthjs reads (`after`, `before`, `function`, `in`, `middleware`, `out`, `query`, `rateLimit`, `successMsg`) nor the `schemaKeyName` of a registered addon now logs an error at startup and drops the route, which answers 404. That is the treatment a broken `rateLimit` profile already got, for the same reason: a route that cannot be protected must not be served.
+A schema key that is neither an option hearthjs reads (`after`, `before`, `function`, `in`, `middleware`, `out`, `permission`, `query`, `rateLimit`, `successMsg`) nor the `schemaKeyName` of a registered addon now logs an error at startup and drops the route, which answers 404. That is the treatment a broken `rateLimit` profile already got, for the same reason: a route that cannot be protected must not be served.
 
 **5. `send` 1 and `serve-static` 2**
 
 `res.sendFile` and `express.static` write `charset=utf-8` where they wrote `charset=UTF-8`; the parameter is case insensitive. `serveStatic.mime` and the deprecated `hidden` option are gone from `hearthjs.express.static`.
+
+#### ✨ Native roles and permissions
+
+`hearthjs.roles.configure({ roles, resolve, requires, refuse })` in `beforeInit`, and a `permission` key in a schema. Off unless the project calls `configure`.
+
+A route declares the permission it demands; one table maps roles to permissions, so a new role is one line there and no edit to any route. Declaring the table turns on deny by default: every route `requires()` calls authenticated must state a permission, and the server lists every offending route and refuses to start rather than serve one unguarded. A `requires()` that throws, or returns anything but a boolean, refuses to start on the first route it hits — one broken predicate has nothing to aggregate. `permission: 'any'` is the written form of "every declared role" — it has to be written, and it refuses a role the table no longer holds.
+
+The guard is resolved at route registration, like a rate limit profile, and pushed after the addon runner so an addon's `401` reaches an anonymous caller before any `403`. A permission no role grants is a typo that drops the route at startup.
+
+`hearthjs.api.routes()` is new: `[{ method, path, api, schemaName, schema }]` for every declared route, the one place route → schema is resolved.
 
 #### 📦 Dependencies
 

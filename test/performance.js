@@ -8,6 +8,7 @@ const validation = require('../lib/validation')
 const expressCompat = require('../lib/expressCompat')
 const mustacheLib = require('../lib/mustache')
 const rateLimit = require('../lib/rateLimit')
+const roles = require('../lib/roles')
 const logger = require('../lib/logger')
 
 /**
@@ -461,6 +462,79 @@ describe('Performance', function () {
 
       assert.strictEqual(ms < 500, true,
         `validating 500 nested items took ${ms.toFixed(1)}ms, expected < 500ms`)
+    })
+  })
+
+  describe('roles', () => {
+    const _table = { roles: {}, resolve: (req) => req.token.role, requires: () => false }
+    const _res = { statusCode: 200, headersSent: false, setHeader: function () {}, end: function () {} }
+    const _next = () => {}
+
+    before(() => {
+      // 31 roles x 200 permissions: the table a project grows into, so a
+      // compilation that got quadratic shows up in the boot test below
+      for (let i = 0; i < 31; i++) {
+        _table.roles['ROLE' + i] = Array.from({ length: 200 }, (_, p) => 'perm.' + p)
+      }
+
+      roles.configure(_table)
+    })
+
+    after(() => {
+      roles._reset()
+    })
+
+    it('should keep the allowed path under budget', () => {
+      const guard = roles._routeMiddleware('perm.199')
+      const req = { token: { role: 'ROLE30' } }
+
+      const ms = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          guard(req, _res, _next)
+        }
+      }, 3)
+
+      // One Set.has on a value resolved at boot: 5.4ms measured for 1M. The
+      // regressions this has to catch measure 43.5ms (an object allocated per
+      // request), 65ms (a walk over the roles table) and 163ms (a string built
+      // per request), so the budget sits under the cheapest of them and still
+      // leaves 5x for a loaded CI machine.
+      assert.strictEqual(ms < 30, true, `1M allowed guard calls took ${ms.toFixed(1)}ms, expected < 30ms`)
+    })
+
+    it('should keep the refused path cheaper than a serialization per refusal', () => {
+      const guard = roles._routeMiddleware('perm.0')
+      const req = { token: { role: 'NOT_A_ROLE' } }
+
+      const ms = bestOf(() => {
+        for (let i = 0; i < 1e6; i++) {
+          guard(req, _res, _next)
+        }
+      }, 3)
+
+      // 11.2ms measured with the body pre-serialized; building it per refusal
+      // measures 152ms, so this budget separates the two rather than sitting
+      // above both the way a round 400ms would
+      assert.strictEqual(ms < 60, true, `1M refusals took ${ms.toFixed(1)}ms, expected < 60ms`)
+    })
+
+    it('should compile a wide table at boot in well under a second', () => {
+      const big = { roles: {}, resolve: (r) => r.token.role, requires: () => false }
+
+      for (let i = 0; i < 31; i++) {
+        big.roles['ROLE' + i] = Array.from({ length: 1000 }, (_, p) => 'perm.' + p)
+      }
+
+      const ms = bestOf(() => {
+        roles._reset()
+        roles.configure(big)
+      }, 3)
+
+      roles._reset()
+      roles.configure(_table)
+
+      // 31k grants in one pass: boot work is paid once and must stay invisible
+      assert.strictEqual(ms < 100, true, `compiling 31 roles x 1000 permissions took ${ms.toFixed(1)}ms`)
     })
   })
 
