@@ -1,10 +1,42 @@
 # HearthJS
 
-### v5.2.0
+### v6.0.0
+
+#### 🚨 Breaking changes
+
+**1. The express 3 signatures express 5 dropped are gone**
+
+`res.send` and `res.json` take one argument, and `res.redirect` reads two as `(status, url)`:
+
+```js
+res.send(404)               // now a 200 answering the body `404`, use res.sendStatus(404)
+res.send(500, 'boom')       // now a 200 answering `boom`,       use res.status(500).send('boom')
+res.json(422, { ok: false })// now a 200,                        use res.status(422).json({ ok: false })
+res.redirect('/a', 301)     // now a redirect to `301`,          use res.redirect(301, '/a')
+res.redirect(301, '/a')     // unchanged
+```
+
+These fail silently, the way they do on express 5. `test/expressCompat.js` pins `res.send(404)` against express 5 so the two cannot drift.
+
+**2. `mime-types` 3 changes what a few extensions resolve to**
+
+Everything on the JSON path is untouched: `json`, `html`, `text`, `urlencoded`, `multipart`, the wildcards, and all 1016 `charset()` lookups answer exactly as before. What moves is the extension table:
+
+- `res.type('js')`, `res.send` and `express.static` answer `text/javascript` for `.js` and `.mjs`, where they answered `application/javascript`. `req.is('js')` and `req.accepts('js')` follow the same shift.
+- `.wav` answers `audio/wav` instead of `audio/wave`; `.es` and `.hsj2` are no longer known. 61 extensions are newly known.
+- `res.set('content-type', 'html')` answered `html; charset=utf-8`, which was wrong, and now answers `text/html; charset=utf-8`.
+
+**3. `send` 1 and `serve-static` 2**
+
+`res.sendFile` and `express.static` write `charset=utf-8` where they wrote `charset=UTF-8`; the parameter is case insensitive. `serveStatic.mime` and the deprecated `hidden` option are gone from `hearthjs.express.static`.
 
 #### 📦 Dependencies
 
-The HTTP stack now uses the exact package set `express` 5.2.1 ships, so the compatibility layer is built on the same primitives as the framework it emulates. `accepts` and `fresh` are published under npm's `next` tag rather than `latest`, so `npm outdated` reports them as behind when they are in fact ahead.
+The HTTP stack now uses the package set `express` 5.2.1 ships, so the compatibility layer is built on the same primitives as the framework it emulates. Only `cookie` is ahead of that set: express 5 still pins `^0.7.1`, hearthjs moved to 2.0.1 in v5.1.0. `accepts` and `fresh` are published under npm's `next` tag rather than `latest`, so `npm outdated` reports them as behind when they are in fact ahead.
+
+`express` moves to 5.2.1 as a devDependency: it is the oracle `test/expressCompat.js` compares against, and it has to run the generation the layer is built on. All 29 differential cases passed against it without a single change to `lib/expressCompat.js`. With express 4 gone, nothing pins `qs` to `~6.15.1` any more, so the whole tree dedupes onto one `qs` 6.16.0 and the `overrides` block is gone.
+
+One divergence had to be stated rather than followed: express 5 defaults `query parser` to `simple`, which drops nesting. Its `extended` mode is exactly the `qs.parse(str, { allowPrototypes: true })` the layer already ran, so the oracle declares `extended` and `req.query` keeps parsing `?a[b]=c`. The differential test now covers nested and repeated keys, which it did not before.
 
 | package | before | after |
 |---------|--------|-------|
@@ -23,21 +55,14 @@ The HTTP stack now uses the exact package set `express` 5.2.1 ships, so the comp
 - `req.body` is `{}` when nothing was parsed, not `undefined`. A `before` hook writing `req.body.x = req.query.x` on a `GET` route keeps working.
 - `urlencoded()` still defaults to `extended: true`, so `a[b]=c` still parses to `{ a: { b: 'c' } }`.
 
-#### 💥 Behaviour changes
+#### 🔻 Smaller
 
-Everything on the JSON path is untouched: `json`, `html`, `text`, `urlencoded`, `multipart`, the wildcards, and all 1016 `charset()` lookups answer exactly as before. What moves is the extension table `mime-types` 3 ships, which is the express 5 alignment:
+`lib/expressCompat.js` drops from 808 to 725 lines. Beyond the signatures above, the express 5 generation now does work the layer was doing by hand:
 
-- `res.type('js')`, `res.send` and `express.static` answer `text/javascript` for `.js` and `.mjs`, where they answered `application/javascript`. `req.is('js')` and `req.accepts('js')` follow the same shift.
-- `.wav` answers `audio/wav` instead of `audio/wave`; `.es` and `.hsj2` are no longer known. 61 extensions are newly known.
-- `res.sendFile` and `express.static` write `charset=utf-8` where they wrote `charset=UTF-8`. The parameter is case insensitive, so `test/expressCompat.js` compares content types case insensitively rather than exempting the case.
-- `serveStatic.mime` and the deprecated `hidden` option are gone from `hearthjs.express.static`.
-
-#### 🚧 Held back
-
-| package | held at | why |
-|---------|---------|-----|
-| `eslint` | 9 | 10 is still only supported by a `neostandard` prerelease (0.14.0-next.1); `neostandard@latest` declares `eslint ^9.0.0`. |
-| `express` (dev) | 4 | It is the oracle the differential tests compare against. Moving it to 5 would quietly redefine what "express compatible" means, which is the one thing these tests exist to pin down. |
+- `res.set('content-type', …)` delegates to `mime.contentType`, which is all express 5 does there. Compared against express 5 on 20 inputs, the two agree everywhere.
+- `PATH_DESCRIPTOR` was dead: restana sets `req.path` before any middleware runs, so the fallback never fired. Checked across a matched route, a 404, `OPTIONS`, `HEAD`, a malformed escape, a mounted sub-router and a double slash.
+- `getHeader` folded into `req.get`, three JSDoc blocks removed (two of which documented the wrong function), and `Object.hasOwn` replaces `hasOwnProperty.call`.
+- `res.setHeader` no longer builds its error message on the nominal path, where `send` calls it six to eight times per file served.
 
 ### v5.1.0
 

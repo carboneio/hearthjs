@@ -26,6 +26,8 @@ const cases = [
   ['send object', 'get', '/send-object', (req, res) => res.send({ a: 1, b: [2, 3] })],
   ['send buffer', 'get', '/send-buffer', (req, res) => res.send(Buffer.from('buffered'))],
   ['send empty', 'get', '/send-empty', (req, res) => res.send()],
+  // express 5 dropped res.send(status): a number is now serialized as a body
+  ['send number', 'get', '/send-number', (req, res) => res.send(404)],
   ['json only', 'get', '/json-only', (req, res) => res.json({ hello: 'world' })],
   ['redirect default', 'get', '/redirect', (req, res) => res.redirect('/target')],
   ['redirect with status', 'get', '/redirect-301', (req, res) => res.redirect(301, '/permanent')],
@@ -76,7 +78,9 @@ function call (port, testCase, callback) {
   const realUrl = url
     .replace(':postId', '77')
     .replace(':id', '42')
-    .replace(':enc', 'https%3A%2F%2Fexample.com%2Fa%20b') + '?a=1&b=two'
+    .replace(':enc', 'https%3A%2F%2Fexample.com%2Fa%20b') +
+    // nested and repeated keys: the parity that the `extended` parser buys
+    '?a=1&b=two&c[d]=3&e[]=4&e[]=5'
 
   const options = {
     url: `http://localhost:${port}${realUrl}`,
@@ -93,9 +97,7 @@ function call (port, testCase, callback) {
 
     return callback(null, {
       statusCode: res.statusCode,
-      // the media type and its charset are case insensitive, and send 1
-      // writes charset=utf-8 where express 4 (send 0.19) writes UTF-8
-      contentType: res.headers['content-type']?.toLowerCase(),
+      contentType: res.headers['content-type'],
       location: res.headers.location,
       setCookie: res.headers['set-cookie'],
       custom: {
@@ -127,6 +129,10 @@ describe('Express compatibility (restana vs express)', function () {
     fs.writeFileSync(fixtureFile, 'file content\n')
 
     const expressApp = express()
+
+    // express 5 defaults to `simple`, which drops nesting. The compatibility
+    // layer keeps the express 4 default, so the oracle has to state it.
+    expressApp.set('query parser', 'extended')
 
     expressApp.use(express.json())
     registerRoutes(expressApp)

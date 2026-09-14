@@ -1,6 +1,6 @@
 {
   "name": "hearthjs",
-  "version": "5.2.0",
+  "version": "6.0.0",
   "description": "A NodeJS server framework to build fast and secured Rest API",
   "main": "lib/index.js",
   "files": [
@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "eslint": "=9.39.5",
-    "express": "=4.22.2",
+    "express": "=5.2.1",
     "file-mock": "=1.0.0",
     "mocha": "=12.0.1",
     "mockdate": "=3.0.5",
@@ -60,9 +60,6 @@
     "nyc": "=18.0.0",
     "sinon": "=22.1.0",
     "socket.io": "=4.8.3"
-  },
-  "overrides": {
-    "qs": "=6.16.0"
   },
   "peerDependencies": {
     "socket.io": ">=4.5.0",
