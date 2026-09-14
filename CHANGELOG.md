@@ -1,5 +1,22 @@
 # HearthJS
 
+### v5.1.0
+
+#### 📦 Dependencies
+
+`npm audit` reported 5 advisories (3 moderate, 2 high) and now reports none.
+
+| package | before | after | why |
+|---------|--------|-------|-----|
+| qs | 6.15.3 | 6.16.0 | 🔒 `GHSA-x5fp-wj9c-mxmx` (array-limit bypass via bracket-key comma parsing) and `GHSA-4mjr-xmp4-gh2g` (DoS via attacker-controlled `isBuffer`). `body-parser` 1 and `express` 4 pin `~6.15.1`, so an `overrides` entry is what actually reaches them. |
+| multer (dev) | 2.2.0 | 2.4.0 | 🔒 5 advisories, all DoS or limit bypass on multipart parsing. |
+| js-yaml (transitive) | 3.15.1 / 4.3.1 | 3.15.2 / 4.3.2 / 5.4.2 | 🔒 `GHSA-2883-xcg3-v3hh`, reached through `nyc`, `eslint` and `mocha`. |
+| commander | 14.0.2 | 15.0.0 | ESM only, which `require()` handles on Node 26. The CLI dispatches the same, `lib/cli/*` uses no `--no-` option. |
+| nanoid | 3.3.18 | 6.0.1 | Same ESM-only story. `nanoid(size)` is unchanged, and `nanoid/async`, dropped in 5, was never used. |
+| mocha (dev) | 11.8.0 | 12.0.1 | Depends on `diff` ^9 and `serialize-javascript` ^7.1.1, so both `overrides` pinning them are gone. |
+| restana | 6.0.1 | 6.1.0 | The 6.1.0 behaviour changes all land on paths hearthjs does not take: it passes its own `http.createServer` instead of calling `service.start()`, and it installs its own `errorHandler`. |
+| cookie | 0.7.2 | 2.0.1 | `serialize(name, value, opts)` became `stringifySetCookie({ name, value, ...opts })` (`lib/expressCompat.js`). The emitted header is byte for byte the one 0.7.2 emitted, attribute order included. 2.x throws on a non-integer `maxAge`, which `resCookie` already floors. |
+
 ### v5.0.0
 
 Requires **Node >= 26**. The suite runs on Node 26 in CI.
