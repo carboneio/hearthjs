@@ -1,5 +1,44 @@
 # HearthJS
 
+### v5.2.0
+
+#### 📦 Dependencies
+
+The HTTP stack now uses the exact package set `express` 5.2.1 ships, so the compatibility layer is built on the same primitives as the framework it emulates. `accepts` and `fresh` are published under npm's `next` tag rather than `latest`, so `npm outdated` reports them as behind when they are in fact ahead.
+
+| package | before | after |
+|---------|--------|-------|
+| accepts | 1.3.8 | 2.0.0 |
+| body-parser | 1.20.6 | 2.3.0 |
+| fresh | 0.5.2 | 2.0.0 |
+| mime-types | 2.1.35 | 3.0.2 |
+| send | 0.19.2 | 1.2.1 |
+| serve-static | 1.16.3 | 2.2.1 |
+| type-is | 1.6.18 | 2.1.0 |
+
+#### 🔀 Unchanged on purpose
+
+`body-parser` 2 dropped two defaults the express 4 line guaranteed, and application code depends on both. `lib/middlewares.js` now wraps the four parsers to restore them, so `hearthjs.express` behaves as it did:
+
+- `req.body` is `{}` when nothing was parsed, not `undefined`. A `before` hook writing `req.body.x = req.query.x` on a `GET` route keeps working.
+- `urlencoded()` still defaults to `extended: true`, so `a[b]=c` still parses to `{ a: { b: 'c' } }`.
+
+#### 💥 Behaviour changes
+
+Everything on the JSON path is untouched: `json`, `html`, `text`, `urlencoded`, `multipart`, the wildcards, and all 1016 `charset()` lookups answer exactly as before. What moves is the extension table `mime-types` 3 ships, which is the express 5 alignment:
+
+- `res.type('js')`, `res.send` and `express.static` answer `text/javascript` for `.js` and `.mjs`, where they answered `application/javascript`. `req.is('js')` and `req.accepts('js')` follow the same shift.
+- `.wav` answers `audio/wav` instead of `audio/wave`; `.es` and `.hsj2` are no longer known. 61 extensions are newly known.
+- `res.sendFile` and `express.static` write `charset=utf-8` where they wrote `charset=UTF-8`. The parameter is case insensitive, so `test/expressCompat.js` compares content types case insensitively rather than exempting the case.
+- `serveStatic.mime` and the deprecated `hidden` option are gone from `hearthjs.express.static`.
+
+#### 🚧 Held back
+
+| package | held at | why |
+|---------|---------|-----|
+| `eslint` | 9 | 10 is still only supported by a `neostandard` prerelease (0.14.0-next.1); `neostandard@latest` declares `eslint ^9.0.0`. |
+| `express` (dev) | 4 | It is the oracle the differential tests compare against. Moving it to 5 would quietly redefine what "express compatible" means, which is the one thing these tests exist to pin down. |
+
 ### v5.1.0
 
 #### 📦 Dependencies

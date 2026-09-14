@@ -93,7 +93,9 @@ function call (port, testCase, callback) {
 
     return callback(null, {
       statusCode: res.statusCode,
-      contentType: res.headers['content-type'],
+      // the media type and its charset are case insensitive, and send 1
+      // writes charset=utf-8 where express 4 (send 0.19) writes UTF-8
+      contentType: res.headers['content-type']?.toLowerCase(),
       location: res.headers.location,
       setCookie: res.headers['set-cookie'],
       custom: {
