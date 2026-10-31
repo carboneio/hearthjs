@@ -28,7 +28,7 @@
   "license": "ISC",
   "dependencies": {
     "accepts": "=2.0.0",
-    "body-parser": "=2.3.0",
+    "body-parser": "=2.4.0",
     "commander": "=15.0.0",
     "cookie": "=2.0.1",
     "cookie-parser": "=1.4.7",
