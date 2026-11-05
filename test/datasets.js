@@ -128,7 +128,7 @@ describe('Datasets', () => {
       let _calls = 0
       database.query = (sql, cb) => {
         _calls += 1
-        return (_calls === 1) ? cb({ code: '40P01' }) : cb(null)
+        return (_calls === 1) ? cb(Object.assign(new Error('deadlock detected'), { code: '40P01' })) : cb(null)
       }
 
       datasets.clean((err) => {
@@ -142,7 +142,7 @@ describe('Datasets', () => {
       let _calls = 0
       database.query = (sql, cb) => {
         _calls += 1
-        return cb({ code: '40P01' })
+        return cb(Object.assign(new Error('deadlock detected'), { code: '40P01' }))
       }
 
       datasets.clean((err) => {
@@ -156,7 +156,7 @@ describe('Datasets', () => {
       let _calls = 0
       database.query = (sql, cb) => {
         _calls += 1
-        return cb({ code: '42P01' })
+        return cb(Object.assign(new Error('relation does not exist'), { code: '42P01' }))
       }
 
       datasets.clean((err) => {

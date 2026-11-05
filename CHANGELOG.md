@@ -1,5 +1,65 @@
 # HearthJS
 
+### v7.0.0
+
+#### 🚨 Breaking changes
+
+**1. A route matches its path case-sensitively**
+
+restana 7 replaces the regexp router with a trie that compares the path as written. A route declared as `/api/users` no longer answers `/API/users`:
+
+```js
+hearthjs.api.get('/api/users', 'getUsers')
+
+// GET /api/users    200, unchanged
+// GET /api/users/   200, unchanged: a trailing slash still matches
+// GET /API/users    was 200, now 404 `Cannot GET /API/users`
+```
+
+express matches case-insensitively by default, and hearthjs follows restana here rather than express on purpose. Everything that checks `req.path` compares it as written: the rate limit `skip` prefixes, a CORS allow-list, a `req.path.startsWith('/api/')` test. Under restana 6 such a check read `/API/user` as a page while the router handed it to the API route, so the check and the thing it guarded disagreed. Now they use the same comparison. `test/server.js` pins it.
+
+**2. Three smaller routing differences**
+
+- A `*` that is not the last segment, or a `?` that is not the last character of a param segment, now throws when the route is registered, so the server does not start. restana 6 accepted both.
+- A trailing wildcard also matches the bare prefix: `/files/*` answers `/files`, with `req.params['*']` set to `''`. Before, `/files` fell through to the next route or to the 404.
+- An absent optional param is left out of `req.params`: on `/users/:id?`, a request to `/users` still reads `req.params.id` as `undefined`, but `'id' in req.params` is now `false`.
+
+#### 🔀 Following express 5.3
+
+`express` 5.3.0 is the new oracle for `test/expressCompat.js`, and the layer follows it on the two points where its answer changed:
+
+- `res.send` no longer writes `content-length` when the handler has set `transfer-encoding`. A response must not carry both headers, and Node's own client refused it with `Content-Length can't be present with Transfer-Encoding`.
+- `res.redirect` sends a complete document to a client that accepts html: `<!DOCTYPE html><head><title>Found</title></head><body><p>Found. Redirecting to /target</p></body>`. The text body is unchanged.
+
+The differential test now sends `Accept: text/html` to a redirect and covers `transfer-encoding`, and it failed on both before the fix. The rest of 5.3 does not reach hearthjs: `res.attachment` and `res.download` are not part of the layer, no hearthjs route uses `QUERY`, and `res.send` already kept the existing content-type parameters when adding the charset.
+
+#### 📦 Dependencies
+
+`npm audit --omit=dev` reported 2 advisories (1 moderate, 1 high) and now reports none.
+
+| package | before | after | why |
+|---------|--------|-------|-----|
+| body-parser | 2.3.0 | 2.4.0 | 🔒 `GHSA-27r3-jxmh-p828`, DoS via trailing bytes after a compressed body. |
+| qs | 6.16.0 | 6.17.1 | 🔒 `GHSA-6pq8-jhm2-2vcw`, in `stringify`, which hearthjs does not call. `req.query` parses 22 edge cases, prototype keys included, exactly as 6.16.0 did. |
+| restana | 6.1.0 | 7.0.0 | The router, above. Its new default error body and its `res.send(number)` rule do not apply to hearthjs: hearthjs installs its own `errorHandler` and `defaultRoute`, and only a stream reaches restana's `send`. |
+| encodeurl | 2.0.0 | 3.0.0 | ESM only, with a named export: `const { encodeUrl } = require('encodeurl')` (`lib/expressCompat.js`). On 265,536 generated inputs it encodes exactly as 2.0.0 does. |
+| nanoid | 6.0.1 | 6.0.2 | Fixes in `customRandom`, which hearthjs does not use. |
+| pg | 8.23.0 | 8.23.1 | Patch. |
+| express (dev) | 5.2.1 | 5.3.0 | The oracle, above. |
+| multer (dev) | 2.4.0 | 2.5.0 | 🔒 `GHSA-q7qp-rjg7-q26m`, DoS via a pending async `fileFilter`. |
+| eslint (dev) | 9.39.5 | 10.14.0 | `eslint.config.js` loads unchanged. |
+| neostandard (dev) | 0.13.0 | 0.14.1 | Turns on `n/no-callback-literal`. Three test mocks passed a plain object as the error and now pass an `Error`. |
+| mocha (dev) | 12.0.1 | 12.0.3 | Patch. |
+| socket.io (dev) | 4.8.3 | 4.8.4 | Patch. The `>=4.5.0` peer range stands. |
+
+`type-is` stays at 2.1.0. Version 3 replaces `typeis(req, types)` with `new TypeIs(types).request(req)`, and the new API answers differently: `req.is('application/*')` would return `'application/*'` where express returns `'application/json'`, `undefined` replaces `null` and `false`, and an unknown extension throws instead of answering `false`. express 5.3, `body-parser` 2.4 and `multer` 2.5 all still use type-is 2. Moving to 3 would mean rebuilding the old answers on top of the new API, and the layer would no longer share the primitive the oracle uses.
+
+#### 🧭 Migrating
+
+1. **Use the declared case.** Any client or link that reaches a route with different capitals gets a 404. A route declared with capitals, `/oauth/accessToken`, has to be called with those same capitals.
+2. **Check route patterns for a `*` or a `?` in the middle.** The server does not start with either one.
+3. **Update anything comparing a redirect's html body exactly.** The text body and the `Location` header are unchanged.
+
 ### v6.0.0
 
 #### 🚨 Breaking changes

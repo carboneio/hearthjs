@@ -147,6 +147,22 @@ describe('Server', () => {
       })
     })
 
+    it('should match a route case-sensitively, like the proxies and middlewares in front of it', (done) => {
+      // restana 6 matched /SCHEMA-B against /schema-b, while a check on req.path
+      // such as a skip list or an `/api/` prefix test compares it as written
+      rock.get(app.server.getEndpoint() + 'SCHEMA-B', function (err, response, body) {
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 404)
+        assert.strictEqual(body.toString().includes('Cannot GET /SCHEMA-B'), true)
+
+        rock.get(app.server.getEndpoint() + 'schema-b/', function (err, response, body) {
+          assert.strictEqual(err, null)
+          assert.strictEqual(body.toString(), 'Coucou', 'a trailing slash still matches')
+          done()
+        })
+      })
+    })
+
     it('should post data and use them', (done) => {
       rock.post({
         url: app.server.getEndpoint() + 'schema-d',

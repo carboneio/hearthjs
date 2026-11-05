@@ -18,7 +18,7 @@ const RESTANA_PORT = 9872
 const fixtureDir = path.join(os.tmpdir(), 'hearthjs-compat-test')
 const fixtureFile = path.join(fixtureDir, 'hello.txt')
 
-// Every case is `[name, method, url, handler]`
+// Every case is `[name, method, url, handler, requestHeaders]`
 const cases = [
   ['status + send', 'get', '/status-send', (req, res) => res.status(201).send('created')],
   ['status + json', 'get', '/status-json', (req, res) => res.status(422).json({ ok: false, n: 1 })],
@@ -31,6 +31,9 @@ const cases = [
   ['json only', 'get', '/json-only', (req, res) => res.json({ hello: 'world' })],
   ['redirect default', 'get', '/redirect', (req, res) => res.redirect('/target')],
   ['redirect with status', 'get', '/redirect-301', (req, res) => res.redirect(301, '/permanent')],
+  ['redirect html', 'get', '/redirect-html', (req, res) => res.redirect('/target?a=<b>'), { accept: 'text/html' }],
+  // express 5.3 stopped sending content-length beside it, which no client parses
+  ['send chunked', 'get', '/send-chunked', (req, res) => res.set('transfer-encoding', 'chunked').send('chunked')],
   ['set header', 'get', '/set-header', (req, res) => res.set('x-custom', 'value').send('ok')],
   ['set headers object', 'get', '/set-headers', (req, res) => res.set({ 'x-a': '1', 'x-b': '2' }).send('ok')],
   ['header alias', 'get', '/header-alias', (req, res) => res.header('x-alias', 'yes').send('ok')],
@@ -73,7 +76,7 @@ function registerRoutes (app) {
  * @param {Function} callback
  */
 function call (port, testCase, callback) {
-  const [, method, url] = testCase
+  const [, method, url, , requestHeaders] = testCase
   // Fill route params and add a query string so both servers get the same input
   const realUrl = url
     .replace(':postId', '77')
@@ -84,7 +87,7 @@ function call (port, testCase, callback) {
 
   const options = {
     url: `http://localhost:${port}${realUrl}`,
-    headers: { 'x-probe': 'probe-value' },
+    headers: { 'x-probe': 'probe-value', ...requestHeaders },
     maxRetry: 1,
     // Compare what the server actually sent, do not follow redirects
     followRedirects: false
