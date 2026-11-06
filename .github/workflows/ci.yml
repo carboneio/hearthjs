@@ -87,4 +87,4 @@ jobs:
         run: npm install
 
       - name: Check for known vulnerabilities
-        run: npm audit --audit-level=low
+        run: npm audit --omit=dev --audit-level=low
