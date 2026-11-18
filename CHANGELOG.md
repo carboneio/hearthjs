@@ -1,5 +1,56 @@
 # HearthJS
 
+### v7.1.0
+
+#### ✨ SQLite
+
+A hearthjs application can run on SQLite instead of PostgreSQL, through Node's built-in `node:sqlite`: no new dependency, and `pg` is no longer loaded when it is not used.
+
+```json
+{ "APP_DATABASE_CLIENT": "sqlite", "APP_DATABASE_SQLITE_FILENAME": "data/app.db" }
+```
+
+- `APP_DATABASE_CLIENT` takes `postgresql`, the default, or `sqlite`. Any other value stops the server from starting, and the config file is left as it was.
+- A relative `APP_DATABASE_SQLITE_FILENAME` lives in the server directory. The file is created if missing, its directory is not.
+- `query`, `exec`, models, migrations, the migration CLI, `datasets.clean()` and `test.waitForRow` work on both. The `$1` placeholders are bound by name, never pasted into the SQL. A query holding several statements runs as a script without parameters, and is refused with parameters, as pg does, instead of SQLite quietly running the first one only. A script runs all or nothing inside a `SAVEPOINT`, like Postgres, and nests in the caller's transaction; it must not hold its own `BEGIN`/`COMMIT` (a migration file with them fails on SQLite). A query ending with an unterminated `/*` comment is one statement.
+- hearthjs's migration table is `hearthjs_migration` on SQLite, since SQLite has no schemas. Its own SQL lives in `lib/sqlRequestSqlite`.
+- `datasets.clean()` and `getTableList` list tables through `pragma_table_list`: virtual tables included, FTS5 shadow tables, `sqlite_*` and `hearthjs_migration` left out.
+- The startup log names the file instead of the Postgres host.
+- A failed `init` no longer leaves the sqlite dialect active, and `close()` resets it.
+- Every SQLite database opens in defensive mode: no SQL can corrupt the file (writing `sqlite_master`, `journal_mode = OFF`, ...).
+- An integer is bound as an INTEGER: node:sqlite binds every number as REAL, so `2` read `'2.0'` in a TEXT column, a concatenation or JSON. A `Map`, a `Set`, a typed array other than `Uint8Array`, a class instance and the like are refused with an error naming the parameter, instead of being stored as raw bytes or `{}`.
+- A read-only database runs reads and schema pragmas only, through an allow-list: the immutable flag alone still let `VACUUM INTO` write a copy of the database to another file. FTS5 works (`data_version` allowed), R-tree does not.
+- A read-only database never runs a view stored in the file: a query touching one fails "not authorized". A hostile backup could hang the event loop with an endless recursive view, and `node:sqlite` has no per-query timeout. The query's own CTEs still work.
+- A read-only database caps one value (`SQLITE_LIMIT_LENGTH`) at 4 times the file or buffer size, 16 MiB at least: a generated column cannot allocate gigabytes ("string or blob too big").
+- A read-only file with a non-empty `-wal` beside it is refused: immutable mode would silently miss its commits.
+- `buffer` opens the bytes of a SQLite file in memory, a backup downloaded from S3 for instance, with no file on disk. A backup of a WAL database is read as is: its header's WAL bytes are flipped during `deserialize()` and restored, without copying the buffer, which ends unchanged. Bytes that are not a database fail at `init`.
+
+`hearthjs.db.create()` opens a second database, SQLite or PostgreSQL, next to the main one, with the same API and its own SQL files. With `readOnly: true`, a SQLite file opens as an immutable snapshot that is never written, locked or created: the way to read a backup and sync it into PostgreSQL. The README shows the whole flow.
+
+The PostgreSQL path is unchanged, except that the Postgres config keys are no longer required when the client is `sqlite`. `test/sqlite.js` covers both, side by side.
+
+Known limits, SQLite only: `rowCount` after DDL or `BEGIN` reports the previous write's count; an integer beyond 2^53 read back makes the query fail; a missing `$N` parameter binds `NULL` (Postgres refuses it); `timeout` is a busy (lock-wait) timeout, not a statement timeout.
+
+#### 🐛 Database fixes, both clients
+
+- A callback that is not a function is refused with a `TypeError` before the query runs. It used to throw an uncaught exception once the query returned, killing the process after a write it reported as failed had been applied.
+- A model the converter cannot read answers an `Error`, not a string. Describing it in that error no longer throws again, out of the callback, on a circular model or one with a throwing getter, which killed the process.
+- `close()` of one database clears only its own parsed SQL files, no longer those of the other databases.
+- `init` and `close` return a promise when no callback is given, like `query` and `exec`. `init` refuses a configuration that is not an object, and a SQL file name that is not a string is an unknown SQL file.
+
+#### 📦 Dependencies
+
+`npm audit --omit=dev` reports no advisory. Each new version's published diff was reviewed: same publishers as before, no install script, no new runtime dependency.
+
+| package | before | after | why |
+|---------|--------|-------|-----|
+| encodeurl | 3.0.0 | 3.0.1 | Fixes a `%` next to a valid escape or at the end: `res.location('/a%a%20')` sent `/a%25a%2520`, now `/a%25a%20`. A well-formed URL encodes as before. |
+| cookie | 2.0.1 | 2.0.2 | `res.cookie()` now throws on an expiry past the year 9999 or a `maxAge` that is not a safe integer, instead of sending it. Its error messages read `cookie <option> is invalid`. |
+| commander | 15.0.0 | 15.1.0 | CLI parsing fixes (`--inspect` forwarding, exponents, Unicode flags) that hearthjs's commands do not rely on. |
+| eslint (dev) | 10.14.0 | 10.15.0 | Rule fixes. It needs minimatch `^11.0.5`. |
+
+`overrides` pins `minimatch` to 11.0.5 (was 11.0.4) for every 7.x to 11.x range, so eslint does not float to a release a few days old. `glob` stays pinned to 14.0.3.
+
 ### v7.0.0
 
 #### 🚨 Breaking changes

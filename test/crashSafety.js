@@ -160,7 +160,7 @@ describe('Crash safety', function () {
     it('should report instead of reading a row that is not there', (done) => {
       const _realDatabase = migration._database
 
-      migration._database = { query: (q, p, cb) => cb(null, { rows: [] }, []) }
+      migration._database = { dialect: app.db.dialect, query: (q, p, cb) => cb(null, { rows: [] }, []) }
 
       migration._execute({ filename: '999_down.sql', choice: '' }, () => {}, (err) => {
         migration._database = _realDatabase

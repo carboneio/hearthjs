@@ -118,6 +118,8 @@ describe('Helper (architecture, config and type guards)', () => {
       helper.loadConfForDatabase('test', (err, conf) => {
         assert.strictEqual(err, null)
         assert.deepStrictEqual(conf, {
+          client: undefined,
+          filename: undefined,
           user: 'user',
           host: 'db.local',
           database: 'my_db',

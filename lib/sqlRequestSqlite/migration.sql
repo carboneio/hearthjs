@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS "hearthjs_migration" (
+  "id" INTEGER PRIMARY KEY NOT NULL,
+  "filename" VARCHAR(255) NOT NULL,
+  "up" TEXT NOT NULL DEFAULT '',
+  "down" TEXT NOT NULL DEFAULT '',
+  "dateApplied" TEXT NOT NULL DEFAULT ''
+);

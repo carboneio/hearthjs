@@ -33,3 +33,4 @@ test/datasets/myApp/server/test.test
 test/datasets/cronApp/server/cron/cron1
 test/datasets/cronApp/server/cron/cron2
 test/datasets/migrationApp2/server/cron/
+test/datasets/sqliteApp/server/data/

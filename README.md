@@ -13,6 +13,90 @@ Here is a list of tools that HearthJS manage
 
 You can find the complete documentation here: [www.hearthjs.io](http://www.hearthjs.io)
 
+## SQLite
+
+PostgreSQL stays the default. SQLite runs on Node's built-in `node:sqlite`, with no extra dependency, and `pg` is not even loaded.
+
+```json
+{
+  "APP_SERVER_PORT": 8080,
+  "APP_DATABASE_CLIENT": "sqlite",
+  "APP_DATABASE_SQLITE_FILENAME": "data/app.db"
+}
+```
+
+| key | value |
+|-----|-------|
+| `APP_DATABASE_CLIENT` | `postgresql` (default) or `sqlite`. Anything else stops the server from starting. |
+| `APP_DATABASE_SQLITE_FILENAME` | The database file, created if missing; its directory must exist. A relative path lives in the server directory, wherever the process starts. `:memory:` for a database that lives as long as the process. |
+| `APP_DATABASE_TIMEOUT` | The busy timeout: how long a query waits for a lock another process holds. 10s by default. |
+
+Both keys can also come from the environment, which wins over the config file. The `APP_DATABASE_USERNAME`, `HOST`, `NAME`, `PASSWORD` and `PORT` keys are then optional and ignored.
+
+`hearthjs.db.query` and `hearthjs.db.exec` work unchanged: the same `$1, $2` placeholders, always bound as parameters, the same `(err, res, rows)` callback or promise, the same models. An integer is bound as an INTEGER, a `Date` as an ISO string, an array, a plain object or an object with `toJSON()` as JSON, a boolean as `1`/`0`, a `Buffer` as a BLOB. Any other object (a `Map`, a `Set`, a `Float64Array`, a class instance...) is refused with an error naming the parameter, rather than stored as something else. An integer beyond 2^53 is bound exactly from a `BigInt`, but reading one back is an error: select it `CAST(... AS TEXT)`. The file uses WAL, foreign keys and SQLite's defensive mode, and `NOW()` returns the ISO date. hearthjs keeps its migrations in a `hearthjs_migration` table, since SQLite has no schemas, and `datasets.clean()` empties every other table, virtual tables included (listed through `pragma_table_list`, FTS5 shadow tables and `sqlite_*` left out).
+
+What stays yours: the SQL in your own `.sql` files and migrations is sent as written, so it has to be SQLite SQL. `node:sqlite` is synchronous, so a query blocks the event loop while it runs: keep them short and indexed. And one connection serves every request, so a `BEGIN` you send is shared by every request that runs before its `COMMIT`.
+
+A query holding several statements runs as a script, without parameters, all or nothing like Postgres: hearthjs wraps it in a `SAVEPOINT`, so it nests in a transaction you opened. A script must not hold its own `BEGIN`/`COMMIT`: `BEGIN` fails cleanly, so a migration file with `BEGIN`/`COMMIT` fails on SQLite. A query ending with an unterminated `/*` comment is one statement.
+
+Known limits, SQLite only:
+
+- `rowCount` after DDL or `BEGIN` reports the previous write's count.
+- An integer beyond 2^53 read back makes the query fail.
+- A missing `$N` parameter binds `NULL`, where Postgres refuses the query.
+- `APP_DATABASE_TIMEOUT` is a busy (lock-wait) timeout, not a statement timeout: `node:sqlite` has none.
+
+### Next to PostgreSQL
+
+`hearthjs.db.create()` returns another database with the same API and its own `.sql` files. It is how an application on PostgreSQL reads a SQLite file, a backup for instance:
+
+```js
+const backup = hearthjs.db.create()
+
+backup.init({ client: 'sqlite', filename: '/backups/.metadata.db.0.backup', readOnly: true }, async (err) => {
+  if (err) {
+    return done(err) // a missing file is an error, it is never created
+  }
+
+  try {
+    const { rows } = await backup.query('SELECT "id", "name" FROM "templates"')
+
+    for (const row of rows) {
+      await hearthjs.db.query('INSERT INTO "templates" ("id", "name") VALUES ($1, $2) ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name"', [row.id, row.name])
+    }
+  } finally {
+    backup.close(done)
+  }
+})
+```
+
+`readOnly` opens the file as an immutable snapshot: no lock, no `-wal` or `-shm` beside it, no byte written. It is meant for a file no process writes any more: a file with a non-empty `-wal` beside it is refused at `init` ("a -wal file is beside it"), since immutable mode would silently miss its commits. Copy a closed database, or use `backup()`. `backup.registerSQLFile(path)` then `backup.exec(name, data)` work as on the main database. For a table too large to hold in memory, iterate on the raw `DatabaseSync` handle, one row at a time: `for (const row of backup.sqlite.db.prepare('SELECT * FROM "templates_patches"').iterate()) {}`. Closing it leaves the main pool alone.
+
+A read-only database runs reads only: `SELECT`, joins, CTEs, functions, and the schema pragmas (`table_info`, `table_xinfo`, `table_list`, `index_list`, `index_info`, `index_xinfo`, `foreign_key_list`). Everything else is denied by an allow-list, including `ATTACH`, `BEGIN` and `VACUUM INTO`, which would otherwise write a copy of the database to another file. Full-text search (FTS5) works; R-tree does not.
+
+A view stored in the file never runs: any query touching one fails with "not authorized". A hostile backup could hang the event loop with an endless recursive view, and `node:sqlite` has no per-query timeout. Read the backup's tables instead; the CTEs of your own query still work. One value (`SQLITE_LIMIT_LENGTH`) is capped at 4 times the size of the file, 16 MiB at least, so a generated column cannot allocate gigabytes: it fails with "string or blob too big".
+
+#### A backup downloaded in memory
+
+A small backup does not need a file: pass its bytes as `buffer`, in place of `filename`. It is loaded in a private in-memory database, and with `readOnly` the same rules apply (allow-list, no view, value cap at 4 times the buffer size). A backup of a WAL database, such as one made by better-sqlite3's `db.backup()`, keeps the WAL flag in its header, which SQLite refuses in memory: hearthjs flips the two header bytes while `deserialize()` copies the buffer, then restores them. The buffer is not copied first, and ends unchanged. Bytes that are not a SQLite database, or a truncated download, fail at `init`, not at the first query.
+
+```js
+const bytes = await downloadFromS3('.metadata.db.0.backup') // a Buffer
+const backup = hearthjs.db.create()
+
+await backup.init({ client: 'sqlite', buffer: bytes, readOnly: true })
+
+try {
+  const { rows } = await backup.query('SELECT "id", "name" FROM "templates"')
+  // one round trip for every row
+  await hearthjs.db.query('INSERT INTO "templates" ("id", "name") SELECT * FROM unnest($1::text[], $2::text[]) ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name"', [rows.map(r => r.id), rows.map(r => r.name)])
+} finally {
+  await backup.close()
+}
+```
+
+`init`, `query`, `exec` and `close` all return a promise when no callback is given. A callback that is not a function is refused before anything runs. `close()` clears only this database's parsed SQL files.
+
 ## Rate limiting
 
 Off by default. In-memory token bucket, per process, no external store: `max` is
