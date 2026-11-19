@@ -1,6 +1,6 @@
 {
   "name": "hearthjs",
-  "version": "7.1.0",
+  "version": "7.1.1",
   "description": "A NodeJS server framework to build fast and secured Rest API",
   "main": "lib/index.js",
   "files": [
@@ -44,7 +44,7 @@
     "pg": "=8.23.1",
     "qs": "=6.17.1",
     "restana": "=7.0.0",
-    "rock-req": "=5.2.1",
+    "rock-req": "=5.3.1",
     "send": "=1.2.1",
     "serve-static": "=2.2.1",
     "type-is": "=2.1.0"

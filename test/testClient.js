@@ -2,6 +2,7 @@ const app = require('../lib/')
 const assert = require('assert')
 const path = require('path')
 const fs = require('fs')
+const http = require('http')
 const logger = require('../lib/logger')
 const TestClient = require('../lib/testClient')
 const rock = require('rock-req')
@@ -236,6 +237,72 @@ describe('Test client', () => {
           assert.strictEqual(body.success, false)
           done()
         })
+      })
+    })
+  })
+
+  // A test must see what the server answered: a retry would hide a 503, a
+  // dropped connection, or replay a POST the server already applied
+  describe('No retry', () => {
+    const hits = []
+    let raw = null
+
+    before((done) => {
+      raw = http.createServer((req, res) => {
+        hits.push(`${req.method} ${req.url}`)
+        req.resume()
+        req.on('end', () => {
+          if (req.url === '/reset') {
+            return req.socket.destroy()
+          }
+          res.writeHead(503, { 'content-type': 'application/json' })
+          res.end('{"success":false}')
+        })
+      }).listen(0, done)
+    })
+
+    after((done) => {
+      raw.close(done)
+    })
+
+    beforeEach(() => {
+      hits.length = 0
+    })
+
+    const client = () => {
+      const _user = new TestClient('test@test.fr', 'Nope')
+      _user.getCompleteUrl = (route) => `http://localhost:${raw.address().port}${route}`
+      return _user
+    }
+
+    it('should answer a 503 as is, after a single request', (done) => {
+      client().post('/unavailable', { a: 1 }, (err, response) => {
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 503)
+        assert.deepStrictEqual(hits, ['POST /unavailable'])
+        done()
+      })
+    })
+
+    it('should report a dropped connection, never replaying the POST', (done) => {
+      client().post('/reset', { a: 1 }, (err) => {
+        assert.strictEqual(err.code, 'ECONNRESET')
+        assert.deepStrictEqual(hits, ['POST /reset'])
+        done()
+      })
+    })
+
+    it('should ignore what an app sets on the shared rock-req defaults', (done) => {
+      const _saved = { maxRetry: rock.defaults.maxRetry, beforeRequest: rock.defaults.beforeRequest }
+      rock.defaults.maxRetry = 3
+      rock.defaults.beforeRequest = () => { throw new Error('shared beforeRequest used') }
+
+      client().get('/unavailable', (err, response) => {
+        Object.assign(rock.defaults, _saved)
+        assert.strictEqual(err, null)
+        assert.strictEqual(response.statusCode, 503)
+        assert.deepStrictEqual(hits, ['GET /unavailable'])
+        done()
       })
     })
   })

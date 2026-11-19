@@ -1,5 +1,22 @@
 # HearthJS
 
+### v7.1.1
+
+#### 🧪 Test client
+
+- `hearthjs.test`'s HTTP client never retries: a test sees exactly what the server answered. It used to send a request again after a 408, 429, 502, 503 or 504, so a test asserting one of them read the second answer, a POST could be applied twice, and a 429 counted twice against the rate limit.
+- It uses its own rock-req instance. An app that changes the shared `require('rock-req').defaults` (`maxRetry`, `beforeRequest`, an egress proxy, ...) no longer changes the requests its tests send.
+
+#### 📦 Dependencies
+
+`npm audit --omit=dev` reports no advisory.
+
+| package | before | after | why |
+|---------|--------|-------|-----|
+| rock-req | 5.2.1 | 5.3.1 | 🔒 A redirect to another host, or from https to http, now drops `authorization`, `cookie`, `proxy-authorization` and `x-auth-token` (only the first two were dropped, on a host change only), and an invalid `Location` answers an error instead of crashing the process. For an app calling rock-req directly: a network error is now retried once, as `maxRetry: 1` always meant (5.2.1 never retried it). Retries back off exponentially, a 429/503 `Retry-After` beyond 2 s returns the response instead of waiting, a 303 turns any method into GET, and idle keep-alive sockets close after 5 s. |
+
+Every other package is at its latest version; `accepts`, `fresh` and `type-is` stay where v7.0.0 explains.
+
 ### v7.1.0
 
 #### ✨ SQLite
