@@ -548,3 +548,36 @@ function assertDisplay (filename, toInclude) {
   let content = fs.readFileSync(filename, 'utf8')
   assert.strictEqual(content.includes(toInclude), true, `The content file ${filename} does not include ${toInclude}\n${content}`)
 }
+
+describe('Migration conflict diff', () => {
+  const migrationCLI = require('../lib/migrationCLI')
+  const red = (line) => `\u001b[31m${line}\u001b[0m`
+  const green = (line) => `\u001b[32m${line}\u001b[0m`
+  const white = (line) => `\u001b[37m${line}\u001b[0m`
+
+  it('should color removed lines red, added ones green, the others white, in order', () => {
+    const _diff = migrationCLI.colorDiff('SELECT 1;\nold line;\nEND;', 'SELECT 1;\nnew line;\nEND;\nextra;')
+
+    assert.strictEqual(_diff, [white('SELECT 1;'), red('old line;'), green('new line;'), white('END;'), green('extra;')].join('\n'))
+  })
+
+  it('should print identical migrations all white', () => {
+    assert.strictEqual(migrationCLI.colorDiff('a\nb', 'a\nb'), [white('a'), white('b')].join('\n'))
+  })
+
+  it('should handle an empty side', () => {
+    assert.strictEqual(migrationCLI.colorDiff('', 'a'), [red(''), green('a')].join('\n'))
+  })
+
+  it('should give up past 5000 lines on either side, and diff 5000 quickly', () => {
+    const _lines = (n, prefix) => Array.from({ length: n }, (v, i) => `${prefix}${i}`).join('\n')
+
+    assert.strictEqual(migrationCLI.colorDiff(_lines(5001, 'a'), 'b'), null)
+    assert.strictEqual(migrationCLI.colorDiff('a', _lines(5001, 'b')), null)
+
+    const _start = Date.now()
+
+    assert.notStrictEqual(migrationCLI.colorDiff(_lines(5000, 'a'), _lines(5000, 'b')), null)
+    assert.ok(Date.now() - _start < 2000)
+  })
+})

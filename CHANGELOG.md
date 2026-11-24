@@ -1,5 +1,18 @@
 # HearthJS
 
+### v7.1.2
+
+- `req.is()` no longer needs `type-is`, and is 2 to 5 times faster. It answers like express, plus:
+  - every extension of the mime database, and all the types of an extension that has several (`js`, `xml`, `wav`, `zip`, `mp4`, ...);
+  - `*/json`, and types with parameters (`text/html; charset=utf-8`);
+  - type arguments in any case (`JSON`);
+  - an unknown type argument is skipped instead of throwing.
+- The request id of the logs no longer needs `nanoid`: same 15 characters, a bit faster.
+- Cookies are parsed by hearthjs on top of `cookie`, without `cookie-parser`: same `req.cookies` (`j:` JSON values included), up to 20% faster.
+- The migration CLI shows conflicts with Node's `util.diff` instead of `diff`.
+- rock-req 5.3.1 → 5.4.0: a closed socket no longer leaves a request without callback. Retries are unchanged.
+- Removed dependencies: `type-is`, `nanoid`, `diff`, `cookie-parser`.
+
 ### v7.1.1
 
 #### 🧪 Test client

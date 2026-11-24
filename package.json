@@ -1,6 +1,6 @@
 {
   "name": "hearthjs",
-  "version": "7.1.1",
+  "version": "7.1.2",
   "description": "A NodeJS server framework to build fast and secured Rest API",
   "main": "lib/index.js",
   "files": [
@@ -31,23 +31,19 @@
     "body-parser": "=2.4.0",
     "commander": "=15.1.0",
     "cookie": "=2.0.2",
-    "cookie-parser": "=1.4.7",
     "debug": "=4.4.3",
-    "diff": "=9.0.0",
     "encodeurl": "=3.0.1",
     "escape-html": "=1.0.3",
     "etag": "=1.8.1",
     "fresh": "=2.0.0",
     "mime-types": "=3.0.2",
-    "nanoid": "=6.0.2",
     "node-cron": "=4.6.0",
     "pg": "=8.23.1",
     "qs": "=6.17.1",
     "restana": "=7.0.0",
-    "rock-req": "=5.3.1",
+    "rock-req": "=5.4.0",
     "send": "=1.2.1",
-    "serve-static": "=2.2.1",
-    "type-is": "=2.1.0"
+    "serve-static": "=2.2.1"
   },
   "devDependencies": {
     "eslint": "=10.15.0",
